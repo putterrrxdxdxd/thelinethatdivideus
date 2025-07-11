@@ -6,7 +6,7 @@ let highestZ = 1;
 const stage = document.getElementById('stage');
 const dropZone = document.getElementById('drop-zone');
 
-// Get webcam stream
+// 📷 Get webcam stream
 async function getWebcamStream() {
     if (localStream) return localStream;
     try {
@@ -17,7 +17,7 @@ async function getWebcamStream() {
     }
 }
 
-// WebRTC connection
+// 🌐 WebRTC connection
 async function startPeerConnection(peerId, initiator) {
     const peer = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
@@ -199,36 +199,100 @@ function handleFile(file) {
     else alert('Unsupported file type: ' + file.type);
 }
 
+// 🎨 Update filters
+function updateFilters(el) {
+    const filters = JSON.parse(el.dataset.filters || '{}');
+    const filterStrings = [];
+
+    for (const [name, value] of Object.entries(filters)) {
+        if (name === 'grayscale') filterStrings.push(`grayscale(${value}%)`);
+        if (name === 'blur') filterStrings.push(`blur(${value}px)`);
+        if (name === 'brightness') filterStrings.push(`brightness(${value}%)`);
+        if (name === 'contrast') filterStrings.push(`contrast(${value}%)`);
+        if (name === 'invert') filterStrings.push(`invert(${value}%)`);
+    }
+
+    el.style.filter = filterStrings.join(' ');
+    el.style.opacity = filters.opacity !== undefined ? filters.opacity : 1;
+
+    socket.emit('filter', { id: el.dataset.id, filters });
+}
+
+// 🎹 Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
-    switch (e.key.toLowerCase()) {
-        case 'w': spawnWebcam(); break;
-        case 'v': spawnVideo(); break;
-        case 'i': spawnImage(); break;
-        case 'd': {
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = 'video/*,image/*';
-            input.onchange = ev => handleFile(ev.target.files[0]);
-            input.click();
-            break;
+    const key = e.key.toLowerCase();
+
+    if (key === 'w') return spawnWebcam();
+    if (key === 'v') return spawnVideo();
+    if (key === 'i') return spawnImage();
+    if (key === 'd') {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'video/*,image/*';
+        input.onchange = ev => handleFile(ev.target.files[0]);
+        input.click();
+        return;
+    }
+    if (key === 'x' && hoveredElement) {
+        const id = hoveredElement.dataset.id;
+        hoveredElement.remove();
+        socket.emit('delete', { id });
+        hoveredElement = null;
+        return;
+    }
+
+    if (!hoveredElement) return;
+
+    const filters = JSON.parse(hoveredElement.dataset.filters || '{}');
+
+    // Filter toggles
+    if (key === 'g') filters.grayscale = filters.grayscale ? 0 : 100;
+    if (key === 'b') filters.blur = filters.blur ? 0 : 5;
+    if (key === 'i') filters.invert = filters.invert ? 0 : 100;
+    if (key === 'c') filters.contrast = filters.contrast ? 0 : 150;
+    if (key === 'l') filters.brightness = filters.brightness ? 0 : 150;
+
+    // 🔥 Intensity
+    if (key === '[') {
+        for (const k in filters) {
+            if (filters[k] > 0 && k !== 'opacity') filters[k] = Math.max(0, filters[k] - 10);
         }
-        case 'delete':
-            if (hoveredElement) {
-                const id = hoveredElement.dataset.id;
-                hoveredElement.remove();
-                socket.emit('delete', { id });
-                hoveredElement = null;
-            }
-            break;
+    }
+    if (key === ']') {
+        for (const k in filters) {
+            if (filters[k] > 0 && k !== 'opacity') filters[k] = Math.min(200, filters[k] + 10);
+        }
+    }
+
+    // 🎛 Opacity control
+    if (e.key === 'ArrowUp') {
+        filters.opacity = parseFloat(filters.opacity) || 1;
+        filters.opacity = Math.min(filters.opacity + 0.1, 1);
+    }
+    if (e.key === 'ArrowDown') {
+        filters.opacity = parseFloat(filters.opacity) || 1;
+        filters.opacity = Math.max(filters.opacity - 0.1, 0);
+    }
+
+    hoveredElement.dataset.filters = JSON.stringify(filters);
+    updateFilters(hoveredElement);
+});
+
+// ☑️ Receive filters from others
+socket.on('filter', ({ id, filters }) => {
+    const el = document.querySelector(`[data-id="${id}"]`);
+    if (el) {
+        el.dataset.filters = JSON.stringify(filters);
+        updateFilters(el);
     }
 });
 
+// 🔄 Sync
 socket.on('spawn', data => {
     if (data.type === 'webcam') spawnWebcam(data.id);
     if (data.type === 'video') spawnVideo(data.src, data.id);
     if (data.type === 'image') spawnImage(data.src, data.id);
 });
-
 socket.on('move', ({ id, x, y }) => {
     const el = document.querySelector(`[data-id="${id}"]`);
     if (el) {
@@ -237,7 +301,6 @@ socket.on('move', ({ id, x, y }) => {
         el.dataset.y = y;
     }
 });
-
 socket.on('resize', ({ id, width, height }) => {
     const el = document.querySelector(`[data-id="${id}"]`);
     if (el) {
@@ -245,8 +308,8 @@ socket.on('resize', ({ id, width, height }) => {
         el.style.height = `${height}px`;
     }
 });
-
 socket.on('delete', ({ id }) => {
     const el = document.querySelector(`[data-id="${id}"]`);
     if (el) el.remove();
 });
+
