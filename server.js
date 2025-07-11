@@ -8,24 +8,17 @@ const io = socketIO(server);
 
 const PORT = process.env.PORT || 3000;
 
-// 📦 Serve static files from 'public' folder
-app.use(express.static('public'));
-
-// 🛡 Add strict Content Security Policy (CSP)
+// 🛡️ TEMPORARY CSP fix: allow unsafe-eval for testing
 app.use((req, res, next) => {
     res.setHeader(
         "Content-Security-Policy",
-        [
-            "default-src 'self';",
-            "script-src 'self';", // No unsafe-eval
-            "style-src 'self' 'unsafe-inline';", // Allow inline styles for now
-            "img-src 'self' data:;", // Images from same origin & base64
-            "media-src 'self' blob:;", // Allow webcam & video streams
-            "connect-src 'self' ws://* wss://*;" // Allow WebSockets
-        ].join(' ')
+        "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline';"
     );
     next();
 });
+
+// 📦 Serve static files from 'public' folder
+app.use(express.static('public'));
 
 // 📝 Store stage state (archives, positions, sizes)
 let stageState = [];
@@ -92,3 +85,4 @@ io.on('connection', (socket) => {
 server.listen(PORT, () => {
     console.log(`✅ Server running at http://localhost:${PORT}`);
 });
+
