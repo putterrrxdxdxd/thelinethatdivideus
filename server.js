@@ -10,14 +10,13 @@ const PORT = process.env.PORT || 3000;
 
 // 🛡️ Content Security Policy to block eval & inline scripts
 app.use((req, res, next) => {
-    res.setHeader("Content-Security-Policy",
-        "default-src 'self'; " +
-        "script-src 'self'; " +
-        "style-src 'self' 'unsafe-inline'; " + // Allow inline styles (CSS only)
-        "img-src 'self' data:; " +             // Allow local images and data URLs
-        "connect-src 'self' ws:;"              // Allow WebSockets
-    );
-    next();
+res.setHeader("Content-Security-Policy",
+    "default-src 'self'; " +
+    "script-src 'self'; " + 
+    "style-src 'self'; " +                 // ❌ removes 'unsafe-inline'
+    "img-src 'self' data:; " +
+    "connect-src 'self' ws:;"
+);
 });
 
 // 📦 Serve static files from 'public' folder
