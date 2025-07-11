@@ -64,5 +64,25 @@ io.on('connection', (socket) => {
 server.listen(PORT, () => {
     console.log(`🚀 Server running at http://localhost:${PORT}`);
 });
+io.on('connection', (socket) => {
+    console.log('A user connected:', socket.id);
+
+    // Relay signaling messages
+    socket.on('signal', (data) => {
+        console.log('Signal from', socket.id, 'to', data.to);
+        io.to(data.to).emit('signal', {
+            from: socket.id,
+            signal: data.signal
+        });
+    });
+
+    // Send list of users to new connection
+    socket.emit('users', Object.keys(io.sockets.sockets).filter(id => id !== socket.id));
+
+    socket.on('disconnect', () => {
+        console.log('User disconnected:', socket.id);
+        socket.broadcast.emit('user-left', socket.id);
+    });
+});
 
 
