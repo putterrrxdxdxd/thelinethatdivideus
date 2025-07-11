@@ -8,47 +8,29 @@ const io = socketIO(server);
 
 const PORT = process.env.PORT || 3000;
 
-// 🛡️ TEMPORARY CSP fix: allow unsafe-eval for testing
-app.use((req, res, next) => {
-    res.setHeader(
-        "Content-Security-Policy",
-        "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline';"
-    );
-    next();
-});
-
-// 📦 Serve static files from 'public' folder
+// Serve static files from 'public' folder
 app.use(express.static('public'));
 
-// 📝 Store stage state (archives, positions, sizes)
+// 🗂 Stage state (so new users get the current scene)
 let stageState = [];
 
 // 🌐 Socket.IO connection
 io.on('connection', (socket) => {
-    console.log('👤 User connected:', socket.id);
+    console.log('👋 A user connected:', socket.id);
 
-    // 📨 Send existing users to the new user
-    const otherUsers = Array.from(io.sockets.sockets.keys()).filter(id => id !== socket.id);
-    socket.emit('users', otherUsers);
+    // Send current stage to the new user
+    socket.emit('init', stageState);
 
-    // 🔄 Relay WebRTC signaling data
-    socket.on('signal', (data) => {
-        console.log('📡 Signal from', socket.id, 'to', data.to);
-        io.to(data.to).emit('signal', {
-            from: socket.id,
-            signal: data.signal
-        });
-    });
-
-    // 📦 Handle archive spawn
+    // 🆕 Handle spawn (add new archive)
     socket.on('spawn', (data) => {
         console.log('📦 Spawn:', data);
-        stageState.push(data);
-        socket.broadcast.emit('spawn', data);
+        stageState.push(data); // Add to stage state
+        socket.broadcast.emit('spawn', data); // Send to others
     });
 
-    // ✋ Handle move
+    // ↔️ Handle move
     socket.on('move', (data) => {
+        console.log('📍 Move:', data);
         const item = stageState.find(el => el.id === data.id);
         if (item) {
             item.x = data.x;
@@ -59,6 +41,7 @@ io.on('connection', (socket) => {
 
     // 📐 Handle resize
     socket.on('resize', (data) => {
+        console.log('📏 Resize:', data);
         const item = stageState.find(el => el.id === data.id);
         if (item) {
             item.width = data.width;
@@ -67,22 +50,27 @@ io.on('connection', (socket) => {
         socket.broadcast.emit('resize', data);
     });
 
-    // 🗑 Handle delete
+    // 🎨 Handle filters (opacity, blur, etc.)
+    socket.on('filter', (data) => {
+        console.log('🎨 Filter:', data);
+        socket.broadcast.emit('filter', data);
+    });
+
+    // ❌ Handle delete
     socket.on('delete', (data) => {
         console.log('🗑 Delete:', data.id);
         stageState = stageState.filter(el => el.id !== data.id);
         socket.broadcast.emit('delete', data);
     });
 
-    // 👋 Handle disconnect
     socket.on('disconnect', () => {
-        console.log('👤 User disconnected:', socket.id);
-        socket.broadcast.emit('user-left', socket.id);
+        console.log('👋 User disconnected:', socket.id);
     });
 });
 
 // 🚀 Start server
 server.listen(PORT, () => {
-    console.log(`✅ Server running at http://localhost:${PORT}`);
+    console.log(`🚀 Server running at http://localhost:${PORT}`);
 });
+
 
