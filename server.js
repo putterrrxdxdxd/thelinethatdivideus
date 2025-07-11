@@ -8,7 +8,19 @@ const io = socketIO(server);
 
 const PORT = process.env.PORT || 3000;
 
-// Serve static files from 'public' folder
+// 🛡️ Content Security Policy to block eval & inline scripts
+app.use((req, res, next) => {
+    res.setHeader("Content-Security-Policy",
+        "default-src 'self'; " +
+        "script-src 'self'; " +
+        "style-src 'self' 'unsafe-inline'; " + // Allow inline styles (CSS only)
+        "img-src 'self' data:; " +             // Allow local images and data URLs
+        "connect-src 'self' ws:;"              // Allow WebSockets
+    );
+    next();
+});
+
+// 📦 Serve static files from 'public' folder
 app.use(express.static('public'));
 
 // 🗂 Stage state (so new users get the current scene)
@@ -72,5 +84,3 @@ io.on('connection', (socket) => {
 server.listen(PORT, () => {
     console.log(`🚀 Server running at http://localhost:${PORT}`);
 });
-
-
