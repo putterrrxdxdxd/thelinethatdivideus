@@ -20,9 +20,9 @@ app.use((req, res, next) => {
     next();
 });
 
-// 🟢 Health check route for Render
+// Serve index.html on root
 app.get('/', (req, res) => {
-    res.send('🟢 The Line That Divide Us server is running.');
+    res.sendFile(__dirname + '/public/index.html');
 });
 
 // 📦 Serve static files from 'public' folder
