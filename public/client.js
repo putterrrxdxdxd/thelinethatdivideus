@@ -1,41 +1,37 @@
 const socket = io();
-let peers = {}; // Track WebRTC peers
+let peers = {};
 let localStream = null;
 let highestZ = 1;
 
 const stage = document.getElementById('stage');
 const dropZone = document.getElementById('drop-zone');
 
-// 📷 Get webcam stream
+// Get webcam stream
 async function getWebcamStream() {
     if (localStream) return localStream;
     try {
         localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         return localStream;
     } catch (err) {
-        console.error('Failed to get webcam:', err);
-        alert('Webcam permission denied!');
+        console.error('Webcam error:', err);
     }
 }
 
-// 🌐 Start WebRTC with a user
+// WebRTC connection
 async function startPeerConnection(peerId, initiator) {
     const peer = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     });
 
     peers[peerId] = peer;
-
-    // Add our video/audio tracks
     const stream = await getWebcamStream();
     stream.getTracks().forEach(track => peer.addTrack(track, stream));
 
-    // When we get a track from peer
-    peer.ontrack = (event) => {
+    peer.ontrack = (e) => {
         const remoteVideo = document.createElement('video');
         remoteVideo.autoplay = true;
         remoteVideo.playsInline = true;
-        remoteVideo.srcObject = event.streams[0];
+        remoteVideo.srcObject = e.streams[0];
         remoteVideo.style.position = 'absolute';
         remoteVideo.style.top = '200px';
         remoteVideo.style.left = '200px';
@@ -45,57 +41,39 @@ async function startPeerConnection(peerId, initiator) {
         makeInteractive(remoteVideo);
     };
 
-    // ICE candidates
     peer.onicecandidate = (e) => {
         if (e.candidate) {
-            socket.emit('signal', {
-                to: peerId,
-                signal: { candidate: e.candidate }
-            });
+            socket.emit('signal', { to: peerId, signal: { candidate: e.candidate } });
         }
     };
 
     if (initiator) {
         const offer = await peer.createOffer();
         await peer.setLocalDescription(offer);
-        socket.emit('signal', {
-            to: peerId,
-            signal: { description: peer.localDescription }
-        });
+        socket.emit('signal', { to: peerId, signal: { description: peer.localDescription } });
     }
 }
 
-// 📨 Handle incoming signaling
 socket.on('signal', async ({ from, signal }) => {
     let peer = peers[from];
     if (!peer) {
         await startPeerConnection(from, false);
         peer = peers[from];
     }
-
     if (signal.description) {
         await peer.setRemoteDescription(new RTCSessionDescription(signal.description));
         if (signal.description.type === 'offer') {
             const answer = await peer.createAnswer();
             await peer.setLocalDescription(answer);
-            socket.emit('signal', {
-                to: from,
-                signal: { description: peer.localDescription }
-            });
+            socket.emit('signal', { to: from, signal: { description: peer.localDescription } });
         }
     }
-
     if (signal.candidate) {
         await peer.addIceCandidate(new RTCIceCandidate(signal.candidate));
     }
 });
 
-// 👋 Connect to existing users
-socket.on('users', (users) => {
-    users.forEach(userId => startPeerConnection(userId, true));
-});
-
-// ❌ Clean up peer when user leaves
+socket.on('users', (users) => users.forEach(userId => startPeerConnection(userId, true)));
 socket.on('user-left', (userId) => {
     if (peers[userId]) {
         peers[userId].close();
@@ -103,7 +81,6 @@ socket.on('user-left', (userId) => {
     }
 });
 
-// 🖱️ Interactivity helpers
 function bringToFront(el) {
     highestZ++;
     el.style.zIndex = highestZ;
@@ -114,36 +91,31 @@ function makeInteractive(el) {
     interact(el)
         .draggable({
             listeners: {
-                start(event) { bringToFront(event.target); },
-                move(event) {
-                    const target = event.target;
-                    const x = (parseFloat(target.dataset.x) || 0) + event.dx;
-                    const y = (parseFloat(target.dataset.y) || 0) + event.dy;
-                    target.style.transform = `translate(${x}px, ${y}px)`;
-                    target.dataset.x = x;
-                    target.dataset.y = y;
-                    socket.emit('move', { id: target.dataset.id, x, y });
+                start: (e) => bringToFront(e.target),
+                move: (e) => {
+                    const t = e.target;
+                    const x = (parseFloat(t.dataset.x) || 0) + e.dx;
+                    const y = (parseFloat(t.dataset.y) || 0) + e.dy;
+                    t.style.transform = `translate(${x}px, ${y}px)`;
+                    t.dataset.x = x;
+                    t.dataset.y = y;
+                    socket.emit('move', { id: t.dataset.id, x, y });
                 }
             }
         })
         .resizable({
             edges: { left: true, right: true, bottom: true, top: true },
             listeners: {
-                move(event) {
-                    const target = event.target;
-                    target.style.width = `${event.rect.width}px`;
-                    target.style.height = `${event.rect.height}px`;
-                    socket.emit('resize', {
-                        id: target.dataset.id,
-                        width: event.rect.width,
-                        height: event.rect.height
-                    });
+                move: (e) => {
+                    const t = e.target;
+                    t.style.width = `${e.rect.width}px`;
+                    t.style.height = `${e.rect.height}px`;
+                    socket.emit('resize', { id: t.dataset.id, width: e.rect.width, height: e.rect.height });
                 }
             }
         });
 }
 
-// 📦 Spawn functions
 function spawnWebcam(id = null) {
     const webcam = document.createElement('video');
     webcam.dataset.id = id || Date.now();
@@ -158,8 +130,7 @@ function spawnWebcam(id = null) {
     stage.appendChild(webcam);
     makeInteractive(webcam);
 
-    getWebcamStream().then(stream => webcam.srcObject = stream);
-
+    getWebcamStream().then(s => webcam.srcObject = s);
     if (!id) socket.emit('spawn', { type: 'webcam', id: webcam.dataset.id });
 }
 
@@ -178,7 +149,6 @@ function spawnVideo(src = 'archives/video1.mp4', id = null) {
     video.height = 240;
     stage.appendChild(video);
     makeInteractive(video);
-
     if (!id) socket.emit('spawn', { type: 'video', src, id: video.dataset.id });
 }
 
@@ -193,11 +163,9 @@ function spawnImage(src = 'archives/image1.jpg', id = null) {
     img.height = 240;
     stage.appendChild(img);
     makeInteractive(img);
-
     if (!id) socket.emit('spawn', { type: 'image', src, id: img.dataset.id });
 }
 
-// 🖱 Hover tracking for filters
 let hoveredElement = null;
 stage.addEventListener('mouseover', (e) => {
     if (e.target.tagName === 'VIDEO' || e.target.tagName === 'IMG') {
@@ -212,7 +180,6 @@ stage.addEventListener('mouseout', (e) => {
     }
 });
 
-// 📁 Drag & drop files
 window.addEventListener('dragover', (e) => {
     e.preventDefault();
     dropZone.style.display = 'flex';
@@ -232,7 +199,6 @@ function handleFile(file) {
     else alert('Unsupported file type: ' + file.type);
 }
 
-// 🎹 Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
     switch (e.key.toLowerCase()) {
         case 'w': spawnWebcam(); break;
@@ -257,7 +223,6 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
-// 🔄 Server sync
 socket.on('spawn', data => {
     if (data.type === 'webcam') spawnWebcam(data.id);
     if (data.type === 'video') spawnVideo(data.src, data.id);
