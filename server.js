@@ -11,26 +11,25 @@ const PORT = process.env.PORT || 3000;
 // Serve static files from 'public' folder
 app.use(express.static('public'));
 
-// 🗂 Stage state (so new users get the current scene)
+// Store stage state
 let stageState = [];
 
 // Socket.IO connection
 io.on('connection', (socket) => {
-    console.log('👋 A user connected:', socket.id);
+    console.log('👋 User connected:', socket.id);
 
-    // Send current stage to the new user
+    // Send current stage to new user
     socket.emit('init', stageState);
 
-    // 🆕 Handle spawn (add new archive)
+    // Handle spawn
     socket.on('spawn', (data) => {
         console.log('📦 Spawn:', data);
-        stageState.push(data); // Add to stage state
-        socket.broadcast.emit('spawn', data); // Send to others
+        stageState.push(data);
+        socket.broadcast.emit('spawn', data);
     });
 
-    // ↔️ Handle move
+    // Handle move
     socket.on('move', (data) => {
-        console.log('📍 Move:', data);
         const item = stageState.find(el => el.id === data.id);
         if (item) {
             item.x = data.x;
@@ -39,9 +38,8 @@ io.on('connection', (socket) => {
         socket.broadcast.emit('move', data);
     });
 
-    // 📐 Handle resize
+    // Handle resize
     socket.on('resize', (data) => {
-        console.log('📏 Resize:', data);
         const item = stageState.find(el => el.id === data.id);
         if (item) {
             item.width = data.width;
@@ -50,7 +48,7 @@ io.on('connection', (socket) => {
         socket.broadcast.emit('resize', data);
     });
 
-    // ❌ Handle delete
+    // Handle delete
     socket.on('delete', (data) => {
         console.log('🗑 Delete:', data.id);
         stageState = stageState.filter(el => el.id !== data.id);
