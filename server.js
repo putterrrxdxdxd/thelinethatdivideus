@@ -10,13 +10,19 @@ const PORT = process.env.PORT || 3000;
 
 // 🛡️ Content Security Policy to block eval & inline scripts
 app.use((req, res, next) => {
-res.setHeader("Content-Security-Policy",
-    "default-src 'self'; " +
-    "script-src 'self'; " + 
-    "style-src 'self'; " +                 // ❌ removes 'unsafe-inline'
-    "img-src 'self' data:; " +
-    "connect-src 'self' ws:;"
-);
+    res.setHeader("Content-Security-Policy",
+        "default-src 'self'; " +
+        "script-src 'self'; " + 
+        "style-src 'self'; " +                 
+        "img-src 'self' data:; " +
+        "connect-src 'self' ws:;"
+    );
+    next();
+});
+
+// 🟢 Health check route for Render
+app.get('/', (req, res) => {
+    res.send('🟢 The Line That Divide Us server is running.');
 });
 
 // 📦 Serve static files from 'public' folder
@@ -81,5 +87,5 @@ io.on('connection', (socket) => {
 
 // 🚀 Start server
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running at http://localhost:${PORT}`);
+    console.log(`🚀 Server running at http://0.0.0.0:${PORT}`);
 });
