@@ -8,27 +8,37 @@ const io = socketIO(server);
 
 const PORT = process.env.PORT || 3000;
 
-// Serve static files from 'public' folder
+// 📦 Serve static files from 'public' folder
 app.use(express.static('public'));
 
-// Store stage state
+// 📝 Store stage state (archives, positions, sizes)
 let stageState = [];
 
-// Socket.IO connection
+// 🌐 Socket.IO connection
 io.on('connection', (socket) => {
-    console.log('👋 User connected:', socket.id);
+    console.log('👤 User connected:', socket.id);
 
-    // Send current stage to new user
-    socket.emit('init', stageState);
+    // 📨 Send existing users to the new user
+    const otherUsers = Array.from(io.sockets.sockets.keys()).filter(id => id !== socket.id);
+    socket.emit('users', otherUsers);
 
-    // Handle spawn
+    // 🔄 Relay WebRTC signaling data
+    socket.on('signal', (data) => {
+        console.log('📡 Signal from', socket.id, 'to', data.to);
+        io.to(data.to).emit('signal', {
+            from: socket.id,
+            signal: data.signal
+        });
+    });
+
+    // 📦 Handle archive spawn
     socket.on('spawn', (data) => {
         console.log('📦 Spawn:', data);
         stageState.push(data);
         socket.broadcast.emit('spawn', data);
     });
 
-    // Handle move
+    // ✋ Handle move
     socket.on('move', (data) => {
         const item = stageState.find(el => el.id === data.id);
         if (item) {
@@ -38,7 +48,7 @@ io.on('connection', (socket) => {
         socket.broadcast.emit('move', data);
     });
 
-    // Handle resize
+    // 📐 Handle resize
     socket.on('resize', (data) => {
         const item = stageState.find(el => el.id === data.id);
         if (item) {
@@ -48,41 +58,21 @@ io.on('connection', (socket) => {
         socket.broadcast.emit('resize', data);
     });
 
-    // Handle delete
+    // 🗑 Handle delete
     socket.on('delete', (data) => {
         console.log('🗑 Delete:', data.id);
         stageState = stageState.filter(el => el.id !== data.id);
         socket.broadcast.emit('delete', data);
     });
 
+    // 👋 Handle disconnect
     socket.on('disconnect', () => {
-        console.log('👋 User disconnected:', socket.id);
-    });
-});
-
-// Start server
-server.listen(PORT, () => {
-    console.log(`🚀 Server running at http://localhost:${PORT}`);
-});
-io.on('connection', (socket) => {
-    console.log('A user connected:', socket.id);
-
-    // Relay signaling messages
-    socket.on('signal', (data) => {
-        console.log('Signal from', socket.id, 'to', data.to);
-        io.to(data.to).emit('signal', {
-            from: socket.id,
-            signal: data.signal
-        });
-    });
-
-    // Send list of users to new connection
-    socket.emit('users', Object.keys(io.sockets.sockets).filter(id => id !== socket.id));
-
-    socket.on('disconnect', () => {
-        console.log('User disconnected:', socket.id);
+        console.log('👤 User disconnected:', socket.id);
         socket.broadcast.emit('user-left', socket.id);
     });
 });
 
-
+// 🚀 Start server
+server.listen(PORT, () => {
+    console.log(`✅ Server running at http://localhost:${PORT}`);
+});
