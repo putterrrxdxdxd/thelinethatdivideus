@@ -1,20 +1,19 @@
-"scripts": {
-  "start": "node server.js"
-}
 {
   "name": "thelinethatdivideus",
   "version": "1.0.0",
+  "description": "",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "express": "^5.1.0",
     "interactjs": "^1.10.27",
     "socket.io": "^4.8.1"
-  }
+  },
+  "author": "",
+  "license": "ISC"
 }
