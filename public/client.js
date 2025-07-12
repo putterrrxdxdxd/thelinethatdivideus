@@ -36,31 +36,40 @@ async function startPeerConnection(peerId, initiator) {
         localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
     }
 
-    peer.ontrack = (e) => {
-        console.log(`Received track from peer ${peerId}, stream id: ${e.streams[0].id}`);
-        const streamId = e.streams[0].id;
-        const videoId = `remote-${peerId}-${streamId}`;
-        let remoteVideo = document.querySelector(`[data-id="${videoId}"]`);
-        if (!remoteVideo) {
-            remoteVideo = document.createElement('video');
-            remoteVideo.dataset.id = videoId;
-            remoteVideo.dataset.peer = peerId;
-            remoteVideo.autoplay = true;
-            remoteVideo.playsInline = true;
-            remoteVideo.muted = false;
-            remoteVideo.style.position = 'absolute';
-            remoteVideo.style.top = '200px';
-            remoteVideo.style.left = '200px';
-            remoteVideo.width = 320;
-            remoteVideo.height = 240;
-            stage.appendChild(remoteVideo);
-            makeInteractive(remoteVideo);
-        }
-        if (remoteVideo.srcObject !== e.streams[0]) {
-            remoteVideo.srcObject = e.streams[0];
-            remoteVideo.play().catch(err => console.warn('Video play failed:', err));
-        }
-    };
+ // ... inside startPeerConnection(peerId, initiator) function
+
+peer.ontrack = (e) => {
+    console.log(`Received track from peer ${peerId}, stream id: ${e.streams[0].id}`);
+
+    // Unique id for the remote video element: peerId + stream id
+    const streamId = e.streams[0].id;
+    const videoId = `remote-${peerId}-${streamId}`;
+
+    let remoteVideo = document.querySelector(`[data-id="${videoId}"]`);
+    if (!remoteVideo) {
+        remoteVideo = document.createElement('video');
+        remoteVideo.dataset.id = videoId;
+        remoteVideo.dataset.peer = peerId;
+        remoteVideo.autoplay = true;
+        remoteVideo.playsInline = true;
+        remoteVideo.muted = false;  // Change to true if autoplay issues persist
+        remoteVideo.style.position = 'absolute';
+        remoteVideo.style.top = '200px';
+        remoteVideo.style.left = '200px';
+        remoteVideo.width = 320;
+        remoteVideo.height = 240;
+        stage.appendChild(remoteVideo);
+        makeInteractive(remoteVideo);
+    }
+
+    if (remoteVideo.srcObject !== e.streams[0]) {
+        remoteVideo.srcObject = e.streams[0];
+        remoteVideo.play().catch(err => {
+            // Autoplay might fail if user hasn't interacted yet, that's okay.
+            console.warn('Video play failed (likely due to autoplay policy):', err);
+        });
+    }
+};
 
     peer.onicecandidate = (e) => {
         if (e.candidate) {
