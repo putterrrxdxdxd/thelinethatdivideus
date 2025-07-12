@@ -45,32 +45,58 @@ peer.ontrack = (e) => {
     const streamId = e.streams[0].id;
     const videoId = `remote-${peerId}-${streamId}`;
 
-    let remoteVideo = document.querySelector(`[data-id="${videoId}"]`);
-    if (!remoteVideo) {
+    // Check if container already exists (video + button)
+    let container = document.querySelector(`[data-id="container-${videoId}"]`);
+    let remoteVideo;
+
+    if (!container) {
+        // Create container div to hold video + mute button
+        container = document.createElement('div');
+        container.dataset.id = `container-${videoId}`;
+        container.dataset.peer = peerId;
+        container.style.position = 'absolute';
+        container.style.top = '200px';
+        container.style.left = '200px';
+        container.style.width = '320px';
+        container.style.height = '260px'; // extra space for button
+        stage.appendChild(container);
+        makeInteractive(container);
+
+        // Create video element inside container
         remoteVideo = document.createElement('video');
         remoteVideo.dataset.id = videoId;
-        remoteVideo.dataset.peer = peerId;
         remoteVideo.autoplay = true;
         remoteVideo.playsInline = true;
-        remoteVideo.muted = false;  // Change to true if autoplay issues persist
-        remoteVideo.style.position = 'absolute';
-        remoteVideo.style.top = '200px';
-        remoteVideo.style.left = '200px';
+        remoteVideo.muted = true; // Start muted to allow autoplay
         remoteVideo.width = 320;
         remoteVideo.height = 240;
-        stage.appendChild(remoteVideo);
-        makeInteractive(remoteVideo);
+        remoteVideo.style.display = 'block';
+
+        // Create mute/unmute button
+        const btn = document.createElement('button');
+        btn.textContent = 'Unmute';
+        btn.style.width = '100%';
+        btn.style.height = '20px';
+        btn.style.cursor = 'pointer';
+
+        btn.addEventListener('click', () => {
+            remoteVideo.muted = !remoteVideo.muted;
+            btn.textContent = remoteVideo.muted ? 'Unmute' : 'Mute';
+        });
+
+        container.appendChild(btn);
+        container.appendChild(remoteVideo);
+    } else {
+        remoteVideo = container.querySelector('video');
     }
 
     if (remoteVideo.srcObject !== e.streams[0]) {
         remoteVideo.srcObject = e.streams[0];
         remoteVideo.play().catch(err => {
-            // Autoplay might fail if user hasn't interacted yet, that's okay.
             console.warn('Video play failed (likely due to autoplay policy):', err);
         });
     }
 };
-
     peer.onicecandidate = (e) => {
         if (e.candidate) {
             console.log(`Sending ICE candidate to peer ${peerId}`);
