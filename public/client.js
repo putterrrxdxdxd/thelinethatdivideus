@@ -41,40 +41,38 @@ async function startPeerConnection(peerId, initiator) {
 peer.ontrack = (e) => {
     console.log(`Received track from peer ${peerId}, stream id: ${e.streams[0].id}`);
 
-    // Unique id for the remote video element: peerId + stream id
     const streamId = e.streams[0].id;
     const videoId = `remote-${peerId}-${streamId}`;
 
-    // Check if container already exists (video + button)
     let container = document.querySelector(`[data-id="container-${videoId}"]`);
     let remoteVideo;
 
     if (!container) {
-        // Create container div to hold video + mute button
         container = document.createElement('div');
         container.dataset.id = `container-${videoId}`;
         container.dataset.peer = peerId;
         container.style.position = 'absolute';
-        container.style.top = '200px';
-        container.style.left = '200px';
+
+        // Randomize position slightly to avoid overlap
+        container.style.top = `${200 + Math.floor(Math.random() * 200)}px`;
+        container.style.left = `${200 + Math.floor(Math.random() * 200)}px`;
         container.style.width = '320px';
-        container.style.height = '260px'; // extra space for button
+        container.style.height = '260px';
+
         stage.appendChild(container);
         makeInteractive(container);
 
-        // Create video element inside container
         remoteVideo = document.createElement('video');
         remoteVideo.dataset.id = videoId;
         remoteVideo.autoplay = true;
         remoteVideo.playsInline = true;
-        remoteVideo.muted = true; // Start muted to allow autoplay
+        remoteVideo.muted = true; // mute initially for autoplay to work
         remoteVideo.width = 320;
         remoteVideo.height = 240;
         remoteVideo.style.display = 'block';
 
-        // Create mute/unmute button
         const btn = document.createElement('button');
-        btn.textContent = 'Unmute';
+        btn.textContent = 'Mute'; // because video starts muted
         btn.style.width = '100%';
         btn.style.height = '20px';
         btn.style.cursor = 'pointer';
