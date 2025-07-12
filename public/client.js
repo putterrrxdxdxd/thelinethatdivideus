@@ -70,6 +70,7 @@ async function startPeerConnection(peerId, initiator) {
     }
 }
 
+// ------- SIGNAL HANDLER: Robust offer/answer state --------
 socket.on('signal', async ({ from, signal }) => {
     let peer = peers[from];
     if (!peer) {
@@ -77,18 +78,30 @@ socket.on('signal', async ({ from, signal }) => {
         peer = peers[from];
     }
     if (signal.description) {
-        await peer.setRemoteDescription(new RTCSessionDescription(signal.description));
         if (signal.description.type === 'offer') {
+            await peer.setRemoteDescription(new RTCSessionDescription(signal.description));
             const answer = await peer.createAnswer();
             await peer.setLocalDescription(answer);
             socket.emit('signal', { to: from, signal: { description: peer.localDescription } });
+        } else if (signal.description.type === 'answer') {
+            // Only set remote answer if we are in correct state
+            if (peer.signalingState === 'have-local-offer') {
+                await peer.setRemoteDescription(new RTCSessionDescription(signal.description));
+            }
+            // else: ignore if already stable, prevents InvalidStateError
         }
     }
     if (signal.candidate) {
-        await peer.addIceCandidate(new RTCIceCandidate(signal.candidate));
+        try {
+            await peer.addIceCandidate(new RTCIceCandidate(signal.candidate));
+        } catch (e) {
+            // Ignore duplicate/invalid candidates
+        }
     }
 });
+
 socket.on('users', (users) => {
+    // Only connect to others, not self
     users.forEach(userId => {
         if (userId !== socket.id && !peers[userId]) startPeerConnection(userId, true);
     });
