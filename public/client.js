@@ -35,7 +35,8 @@ async function startPeerConnection(peerId, initiator) {
     }
 
     peer.ontrack = (e) => {
-        // Create a unique video element for this track + peer combination
+        console.log(`Received track from peer ${peerId}, stream id: ${e.streams[0].id}`);
+        // Create a unique video element per peer and stream
         const streamId = e.streams[0].id;
         const videoId = `remote-${peerId}-${streamId}`;
         let remoteVideo = document.querySelector(`[data-id="${videoId}"]`);
@@ -54,14 +55,15 @@ async function startPeerConnection(peerId, initiator) {
             stage.appendChild(remoteVideo);
             makeInteractive(remoteVideo);
         }
-        // Assign stream to video element
         if (remoteVideo.srcObject !== e.streams[0]) {
             remoteVideo.srcObject = e.streams[0];
+            remoteVideo.play().catch(err => console.warn('Video play failed:', err));
         }
     };
 
     peer.onicecandidate = (e) => {
         if (e.candidate) {
+            console.log(`Sending ICE candidate to peer ${peerId}`);
             socket.emit('signal', { to: peerId, signal: { candidate: e.candidate } });
         }
     };
