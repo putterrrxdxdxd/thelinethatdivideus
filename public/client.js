@@ -2,13 +2,11 @@ const socket = io();
 let peers = {};
 let localStream = null;
 let highestZ = 1;
-let isSharingWebcam = false;
-let webcamId = null; // Track our webcam element id
 
 const stage = document.getElementById('stage');
 const dropZone = document.getElementById('drop-zone');
 
-// 📷 Get webcam stream (only if sharing)
+// 📷 Get (and keep) a single webcam stream per user
 async function getWebcamStream() {
     if (localStream) return localStream;
     try {
@@ -23,7 +21,7 @@ async function getWebcamStream() {
     }
 }
 
-// 🌐 WebRTC connection
+// 🌐 WebRTC connection: always send your webcam if asked
 async function startPeerConnection(peerId, initiator) {
     if (peers[peerId]) return;
     const peer = new RTCPeerConnection({
@@ -31,30 +29,16 @@ async function startPeerConnection(peerId, initiator) {
     });
     peers[peerId] = peer;
 
-    // Only add webcam tracks if we are sharing webcam
-    if (isSharingWebcam && localStream) {
+    // Always add webcam tracks if you have them (so others can see your face)
+    if (localStream) {
         localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
     }
 
-    // Show remote stream
     peer.ontrack = (e) => {
-        let remoteVideo = document.querySelector(`[data-peer="${peerId}"]`);
-        if (!remoteVideo) {
-            remoteVideo = document.createElement('video');
-            remoteVideo.dataset.id = `remote-${peerId}`;
-            remoteVideo.dataset.peer = peerId;
-            remoteVideo.autoplay = true;
-            remoteVideo.playsInline = true;
-            remoteVideo.muted = false;
+        // Any time you receive a remote stream, update ALL remote webcam boxes for this peer
+        document.querySelectorAll(`[data-peer="${peerId}"]`).forEach(remoteVideo => {
             remoteVideo.srcObject = e.streams[0];
-            remoteVideo.style.position = 'absolute';
-            remoteVideo.style.top = '200px';
-            remoteVideo.style.left = '200px';
-            remoteVideo.width = 320;
-            remoteVideo.height = 240;
-            stage.appendChild(remoteVideo);
-            makeInteractive(remoteVideo);
-        }
+        });
     };
 
     peer.onicecandidate = (e) => {
@@ -70,7 +54,7 @@ async function startPeerConnection(peerId, initiator) {
     }
 }
 
-// ------- SIGNAL HANDLER: Robust offer/answer state --------
+// ------- SIGNAL HANDLER --------
 socket.on('signal', async ({ from, signal }) => {
     let peer = peers[from];
     if (!peer) {
@@ -84,24 +68,19 @@ socket.on('signal', async ({ from, signal }) => {
             await peer.setLocalDescription(answer);
             socket.emit('signal', { to: from, signal: { description: peer.localDescription } });
         } else if (signal.description.type === 'answer') {
-            // Only set remote answer if we are in correct state
             if (peer.signalingState === 'have-local-offer') {
                 await peer.setRemoteDescription(new RTCSessionDescription(signal.description));
             }
-            // else: ignore if already stable, prevents InvalidStateError
         }
     }
     if (signal.candidate) {
         try {
             await peer.addIceCandidate(new RTCIceCandidate(signal.candidate));
-        } catch (e) {
-            // Ignore duplicate/invalid candidates
-        }
+        } catch (e) {}
     }
 });
 
 socket.on('users', (users) => {
-    // Only connect to others, not self
     users.forEach(userId => {
         if (userId !== socket.id && !peers[userId]) startPeerConnection(userId, true);
     });
@@ -111,12 +90,12 @@ socket.on('user-left', (userId) => {
     if (peer) {
         peer.close();
         delete peers[userId];
-        const remoteVideo = document.querySelector(`[data-peer="${userId}"]`);
-        if (remoteVideo) remoteVideo.remove();
+        // Remove ALL remote webcam boxes for this peer
+        document.querySelectorAll(`[data-peer="${userId}"]`).forEach(v => v.remove());
     }
 });
 
-// --------- Collaborative Move/Resize/Filter/Delete ---------
+// --------- Move/Resize/Filter/Delete ---------
 function bringToFront(el) {
     highestZ++;
     el.style.zIndex = highestZ;
@@ -151,17 +130,15 @@ function makeInteractive(el) {
         });
 }
 
-// ---------- Spawn Elements ----------
-function spawnWebcam(id = null) {
-    if (isSharingWebcam) return; // Prevent spawning multiple webcams
-    isSharingWebcam = true;
-    webcamId = id || Date.now();
-
+// ---------- SPAWN WEBCAM: unlimited clones
+function spawnWebcam(id = null, peerId = socket.id) {
+    id = id || `webcam-${socket.id}-${Date.now()}`; // Unique per webcam box!
     const webcam = document.createElement('video');
-    webcam.dataset.id = webcamId;
+    webcam.dataset.id = id;
+    webcam.dataset.peer = peerId;
     webcam.autoplay = true;
     webcam.playsInline = true;
-    webcam.muted = true;
+    webcam.muted = peerId === socket.id; // Only mute self
     webcam.style.position = 'absolute';
     webcam.style.top = '100px';
     webcam.style.left = '100px';
@@ -170,13 +147,23 @@ function spawnWebcam(id = null) {
     stage.appendChild(webcam);
     makeInteractive(webcam);
 
-    getWebcamStream().then(s => { if (s) webcam.srcObject = s; });
-    if (!id) socket.emit('spawn', { type: 'webcam', id: webcamId });
+    if (peerId === socket.id) {
+        // If this is *my* webcam, show my local stream
+        getWebcamStream().then(s => { if (s) webcam.srcObject = s; });
+    }
+    // If remote, will get stream via peer.ontrack later
+
+    if (!id.includes('-from-server')) {
+        socket.emit('spawn', { type: 'webcam', id, peerId }); // Tell everyone
+    }
 }
 
+// ---- Spawn other media ----
 function spawnVideo(src = 'archives/video1.mp4', id = null) {
+    id = id || `video-${Date.now()}`;
+    if (document.querySelector(`[data-id="${id}"]`)) return;
     const video = document.createElement('video');
-    video.dataset.id = id || Date.now();
+    video.dataset.id = id;
     video.src = src;
     video.autoplay = true;
     video.loop = true;
@@ -189,12 +176,14 @@ function spawnVideo(src = 'archives/video1.mp4', id = null) {
     video.height = 240;
     stage.appendChild(video);
     makeInteractive(video);
-    if (!id) socket.emit('spawn', { type: 'video', src, id: video.dataset.id });
+    if (!id.includes('-from-server')) socket.emit('spawn', { type: 'video', src, id });
 }
 
 function spawnImage(src, id = null) {
+    id = id || `image-${Date.now()}`;
+    if (document.querySelector(`[data-id="${id}"]`)) return;
     const img = document.createElement('img');
-    img.dataset.id = id || Date.now();
+    img.dataset.id = id;
     img.src = src;
     img.style.position = 'absolute';
     img.style.top = '200px';
@@ -203,54 +192,8 @@ function spawnImage(src, id = null) {
     img.height = 240;
     stage.appendChild(img);
     makeInteractive(img);
-    if (!id) socket.emit('spawn', { type: 'image', src, id: img.dataset.id });
+    if (!id.includes('-from-server')) socket.emit('spawn', { type: 'image', src, id });
 }
-
-// ---- Late joiner state restore ----
-socket.on('init', (stageState) => {
-    stageState.forEach(item => {
-        if (item.type === 'webcam') {
-            // Only spawn webcam locally if it's yours (matching your webcamId)
-            if (item.id === webcamId) {
-                spawnWebcam(item.id);
-            }
-            // Remote webcams will be shown via WebRTC ontrack events
-        }
-        if (item.type === 'video') spawnVideo(item.src, item.id);
-        if (item.type === 'image') spawnImage(item.src, item.id);
-        const el = document.querySelector(`[data-id="${item.id}"]`);
-        if (el) {
-            if (item.x && item.y) {
-                el.style.transform = `translate(${item.x}px, ${item.y}px)`;
-                el.dataset.x = item.x;
-                el.dataset.y = item.y;
-            }
-            if (item.width && item.height) {
-                el.style.width = `${item.width}px`;
-                el.style.height = `${item.height}px`;
-            }
-            if (item.filters) {
-                el.dataset.filters = JSON.stringify(item.filters);
-                updateFilters(el, false);
-            }
-        }
-    });
-});
-
-// ---- Hovered element outline for easy targeting ----
-let hoveredElement = null;
-stage.addEventListener('mouseover', (e) => {
-    if (e.target.tagName === 'VIDEO' || e.target.tagName === 'IMG') {
-        hoveredElement = e.target;
-        e.target.style.outline = '2px solid red';
-    }
-});
-stage.addEventListener('mouseout', (e) => {
-    if (e.target === hoveredElement) {
-        e.target.style.outline = 'none';
-        hoveredElement = null;
-    }
-});
 
 // -------- File and Drag-and-Drop handling --------
 function handleFile(file) {
@@ -288,11 +231,10 @@ socket.on('filter', ({ id, filters, sender }) => {
 });
 socket.on('spawn', data => {
     if (data.type === 'webcam') {
-        // Only spawn local webcam for ourselves, remote will show via ontrack.
-        if (data.id === webcamId) spawnWebcam(data.id);
+        spawnWebcam(data.id, data.peerId); // Show remote or local, use peerId for source
     }
-    if (data.type === 'video') spawnVideo(data.src, data.id);
-    if (data.type === 'image') spawnImage(data.src, data.id);
+    if (data.type === 'video') spawnVideo(data.src, data.id + '-from-server');
+    if (data.type === 'image') spawnImage(data.src, data.id + '-from-server');
 });
 socket.on('move', ({ id, x, y }) => {
     const el = document.querySelector(`[data-id="${id}"]`);
@@ -314,6 +256,48 @@ socket.on('delete', ({ id }) => {
     if (el) el.remove();
 });
 
+// ---- Late joiner state restore ----
+socket.on('init', (stageState) => {
+    stageState.forEach(item => {
+        if (item.type === 'webcam') {
+            spawnWebcam(item.id, item.peerId);
+        }
+        if (item.type === 'video') spawnVideo(item.src, item.id + '-from-server');
+        if (item.type === 'image') spawnImage(item.src, item.id + '-from-server');
+        const el = document.querySelector(`[data-id="${item.id}"]`);
+        if (el) {
+            if (item.x && item.y) {
+                el.style.transform = `translate(${item.x}px, ${item.y}px)`;
+                el.dataset.x = item.x;
+                el.dataset.y = y;
+            }
+            if (item.width && item.height) {
+                el.style.width = `${item.width}px`;
+                el.style.height = `${item.height}px`;
+            }
+            if (item.filters) {
+                el.dataset.filters = JSON.stringify(item.filters);
+                updateFilters(el, false);
+            }
+        }
+    });
+});
+
+// ---- Hovered element outline for easy targeting ----
+let hoveredElement = null;
+stage.addEventListener('mouseover', (e) => {
+    if (e.target.tagName === 'VIDEO' || e.target.tagName === 'IMG') {
+        hoveredElement = e.target;
+        e.target.style.outline = '2px solid red';
+    }
+});
+stage.addEventListener('mouseout', (e) => {
+    if (e.target === hoveredElement) {
+        e.target.style.outline = 'none';
+        hoveredElement = null;
+    }
+});
+
 // -------- FILTER & DELETE KEYBOARD SHORTCUTS --------
 function updateFilters(el, send = true) {
     const filters = JSON.parse(el.dataset.filters || '{}');
@@ -330,9 +314,13 @@ function updateFilters(el, send = true) {
     if (send) socket.emit('filter', { id: el.dataset.id, filters, sender: socket.id });
 }
 
+// ----- Keyboard shortcuts -----
 document.addEventListener('keydown', (e) => {
     const key = e.key.toLowerCase();
-    if (key === 'w') return spawnWebcam();
+    if (key === 'w') {
+        spawnWebcam(); // Spawns ANOTHER webcam box
+        return;
+    }
     if (key === 'v') return spawnVideo();
     if (key === 'i') return spawnImage('archives/image1.jpg');
     if (key === 'd') { // D for "Dialog": open file dialog
