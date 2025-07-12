@@ -88,12 +88,15 @@ peer.ontrack = (e) => {
         remoteVideo = container.querySelector('video');
     }
 
-    if (remoteVideo.srcObject !== e.streams[0]) {
-        remoteVideo.srcObject = e.streams[0];
+ if (remoteVideo.srcObject !== e.streams[0]) {
+    remoteVideo.srcObject = e.streams[0];
+    // Only play if still connected to DOM
+    if (document.body.contains(remoteVideo)) {
         remoteVideo.play().catch(err => {
             console.warn('Video play failed (likely due to autoplay policy):', err);
         });
     }
+}
 };
     peer.onicecandidate = (e) => {
         if (e.candidate) {
