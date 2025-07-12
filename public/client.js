@@ -10,26 +10,27 @@ const dropZone = document.getElementById('drop-zone');
 async function getWebcamStream() {
     if (localStream) return localStream;
     try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            throw new Error('Webcam not supported');
+        }
         localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         return localStream;
     } catch (err) {
         console.error('Webcam error:', err);
+        alert('Could not access webcam: ' + err.message);
     }
 }
 
-// 🌐 Start WebRTC peer connection
+// 🌐 WebRTC connection
 async function startPeerConnection(peerId, initiator) {
-    if (peers[peerId]) return; // 🛡️ Already connected
+    if (peers[peerId]) return;
     const peer = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     });
     peers[peerId] = peer;
-
     const stream = await getWebcamStream();
-    stream.getTracks().forEach(track => peer.addTrack(track, stream));
-
+    if (stream) stream.getTracks().forEach(track => peer.addTrack(track, stream));
     peer.ontrack = (e) => {
-        // 🛡️ Prevent multiple video elements per peer
         let remoteVideo = document.querySelector(`[data-peer="${peerId}"]`);
         if (!remoteVideo) {
             remoteVideo = document.createElement('video');
@@ -48,20 +49,17 @@ async function startPeerConnection(peerId, initiator) {
             makeInteractive(remoteVideo);
         }
     };
-
     peer.onicecandidate = (e) => {
         if (e.candidate) {
             socket.emit('signal', { to: peerId, signal: { candidate: e.candidate } });
         }
     };
-
     if (initiator) {
         const offer = await peer.createOffer();
         await peer.setLocalDescription(offer);
         socket.emit('signal', { to: peerId, signal: { description: peer.localDescription } });
     }
 }
-
 socket.on('signal', async ({ from, signal }) => {
     let peer = peers[from];
     if (!peer) {
@@ -80,31 +78,26 @@ socket.on('signal', async ({ from, signal }) => {
         await peer.addIceCandidate(new RTCIceCandidate(signal.candidate));
     }
 });
-
 socket.on('users', (users) => {
     users.forEach(userId => {
-        if (userId !== socket.id && !peers[userId]) {
-            startPeerConnection(userId, true);
-        }
+        if (userId !== socket.id && !peers[userId]) startPeerConnection(userId, true);
     });
 });
-
 socket.on('user-left', (userId) => {
     const peer = peers[userId];
     if (peer) {
         peer.close();
         delete peers[userId];
-        // 🗑️ Remove remote video
         const remoteVideo = document.querySelector(`[data-peer="${userId}"]`);
         if (remoteVideo) remoteVideo.remove();
     }
 });
 
+// --------- Collaborative Move/Resize/Filter/Delete ---------
 function bringToFront(el) {
     highestZ++;
     el.style.zIndex = highestZ;
 }
-
 function makeInteractive(el) {
     bringToFront(el);
     interact(el)
@@ -135,12 +128,13 @@ function makeInteractive(el) {
         });
 }
 
+// ---------- Spawn Elements ----------
 function spawnWebcam(id = null) {
     const webcam = document.createElement('video');
     webcam.dataset.id = id || Date.now();
     webcam.autoplay = true;
     webcam.playsInline = true;
-    webcam.muted = true; // Local muted
+    webcam.muted = true;
     webcam.style.position = 'absolute';
     webcam.style.top = '100px';
     webcam.style.left = '100px';
@@ -148,11 +142,9 @@ function spawnWebcam(id = null) {
     webcam.height = 240;
     stage.appendChild(webcam);
     makeInteractive(webcam);
-
-    getWebcamStream().then(s => webcam.srcObject = s);
+    getWebcamStream().then(s => { if (s) webcam.srcObject = s; });
     if (!id) socket.emit('spawn', { type: 'webcam', id: webcam.dataset.id });
 }
-
 function spawnVideo(src = 'archives/video1.mp4', id = null) {
     const video = document.createElement('video');
     video.dataset.id = id || Date.now();
@@ -170,7 +162,6 @@ function spawnVideo(src = 'archives/video1.mp4', id = null) {
     makeInteractive(video);
     if (!id) socket.emit('spawn', { type: 'video', src, id: video.dataset.id });
 }
-
 function spawnImage(src, id = null) {
     const img = document.createElement('img');
     img.dataset.id = id || Date.now();
@@ -185,9 +176,8 @@ function spawnImage(src, id = null) {
     if (!id) socket.emit('spawn', { type: 'image', src, id: img.dataset.id });
 }
 
-// ☑️ Late join stage state restore
+// ---- Late joiner state restore ----
 socket.on('init', (stageState) => {
-    console.log('🔄 Restoring stage state...');
     stageState.forEach(item => {
         if (item.type === 'webcam') spawnWebcam(item.id);
         if (item.type === 'video') spawnVideo(item.src, item.id);
@@ -211,6 +201,7 @@ socket.on('init', (stageState) => {
     });
 });
 
+// ---- Hovered element outline for easy targeting ----
 let hoveredElement = null;
 stage.addEventListener('mouseover', (e) => {
     if (e.target.tagName === 'VIDEO' || e.target.tagName === 'IMG') {
@@ -225,36 +216,40 @@ stage.addEventListener('mouseout', (e) => {
     }
 });
 
-// 🎨 Update filters
-function updateFilters(el, send = true) {
-    const filters = JSON.parse(el.dataset.filters || '{}');
-    const filterStrings = [];
-
-    for (const [name, value] of Object.entries(filters)) {
-        if (name === 'grayscale') filterStrings.push(`grayscale(${value}%)`);
-        if (name === 'blur') filterStrings.push(`blur(${value}px)`);
-        if (name === 'brightness') filterStrings.push(`brightness(${value}%)`);
-        if (name === 'contrast') filterStrings.push(`contrast(${value}%)`);
-        if (name === 'invert') filterStrings.push(`invert(${value}%)`);
-    }
-
-    el.style.filter = filterStrings.join(' ');
-    el.style.opacity = filters.opacity !== undefined ? filters.opacity : 1;
-
-    if (send) {
-        socket.emit('filter', { id: el.dataset.id, filters, sender: socket.id });
+// -------- File and Drag-and-Drop handling --------
+function handleFile(file) {
+    if (!file) return;
+    if (file.type.startsWith('video/')) {
+        const url = URL.createObjectURL(file);
+        spawnVideo(url);
+    } else if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = (event) => spawnImage(event.target.result);
+        reader.readAsDataURL(file);
+    } else {
+        alert('Unsupported file type: ' + file.type);
     }
 }
+window.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.style.display = 'flex';
+});
+window.addEventListener('dragleave', () => dropZone.style.display = 'none');
+window.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.style.display = 'none';
+    for (const file of e.dataTransfer.files) handleFile(file);
+});
 
+// ---------- Collaborative events ----------
 socket.on('filter', ({ id, filters, sender }) => {
-    if (sender === socket.id) return; // 🛡️ Ignore own updates
+    if (sender === socket.id) return;
     const el = document.querySelector(`[data-id="${id}"]`);
     if (el) {
         el.dataset.filters = JSON.stringify(filters);
         updateFilters(el, false);
     }
 });
-
 socket.on('spawn', data => {
     if (data.type === 'webcam') spawnWebcam(data.id);
     if (data.type === 'video') spawnVideo(data.src, data.id);
@@ -278,4 +273,70 @@ socket.on('resize', ({ id, width, height }) => {
 socket.on('delete', ({ id }) => {
     const el = document.querySelector(`[data-id="${id}"]`);
     if (el) el.remove();
+});
+
+// -------- FILTER & DELETE KEYBOARD SHORTCUTS --------
+function updateFilters(el, send = true) {
+    const filters = JSON.parse(el.dataset.filters || '{}');
+    const filterStrings = [];
+    for (const [name, value] of Object.entries(filters)) {
+        if (name === 'grayscale') filterStrings.push(`grayscale(${value}%)`);
+        if (name === 'blur') filterStrings.push(`blur(${value}px)`);
+        if (name === 'brightness') filterStrings.push(`brightness(${value}%)`);
+        if (name === 'contrast') filterStrings.push(`contrast(${value}%)`);
+        if (name === 'invert') filterStrings.push(`invert(${value}%)`);
+    }
+    el.style.filter = filterStrings.join(' ');
+    el.style.opacity = filters.opacity !== undefined ? filters.opacity : 1;
+    if (send) socket.emit('filter', { id: el.dataset.id, filters, sender: socket.id });
+}
+
+document.addEventListener('keydown', (e) => {
+    const key = e.key.toLowerCase();
+    if (key === 'w') return spawnWebcam();
+    if (key === 'v') return spawnVideo();
+    if (key === 'i') return spawnImage('archives/image1.jpg');
+    if (key === 'd') { // D for "Dialog": open file dialog
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'video/*,image/*';
+        input.multiple = true;
+        input.onchange = ev => { for (const file of ev.target.files) handleFile(file); };
+        input.click();
+        return;
+    }
+    if (key === 'x' && hoveredElement) {
+        const id = hoveredElement.dataset.id;
+        hoveredElement.remove();
+        socket.emit('delete', { id });
+        hoveredElement = null;
+        return;
+    }
+    if (!hoveredElement) return;
+    const filters = JSON.parse(hoveredElement.dataset.filters || '{}');
+    if (key === 'g') filters.grayscale = filters.grayscale ? 0 : 100;
+    if (key === 'b') filters.blur = filters.blur ? 0 : 5;
+    if (key === 'i') filters.invert = filters.invert ? 0 : 100;
+    if (key === 'c') filters.contrast = filters.contrast ? 0 : 150;
+    if (key === 'l') filters.brightness = filters.brightness ? 0 : 150;
+    if (e.key === '[') {
+        for (const k in filters) {
+            if (filters[k] > 0 && k !== 'opacity') filters[k] = Math.max(0, filters[k] - 10);
+        }
+    }
+    if (e.key === ']') {
+        for (const k in filters) {
+            if (filters[k] > 0 && k !== 'opacity') filters[k] = Math.min(200, filters[k] + 10);
+        }
+    }
+    if (e.key === 'ArrowUp') {
+        filters.opacity = parseFloat(filters.opacity) || 1;
+        filters.opacity = Math.min(filters.opacity + 0.1, 1);
+    }
+    if (e.key === 'ArrowDown') {
+        filters.opacity = parseFloat(filters.opacity) || 1;
+        filters.opacity = Math.max(filters.opacity - 0.1, 0);
+    }
+    hoveredElement.dataset.filters = JSON.stringify(filters);
+    updateFilters(hoveredElement);
 });
