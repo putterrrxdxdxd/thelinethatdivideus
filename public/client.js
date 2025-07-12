@@ -35,10 +35,29 @@ async function startPeerConnection(peerId, initiator) {
     }
 
     peer.ontrack = (e) => {
-        // Any time you receive a remote stream, update ALL remote webcam boxes for this peer
-        document.querySelectorAll(`[data-peer="${peerId}"]`).forEach(remoteVideo => {
+        // Create a unique video element for this track + peer combination
+        const streamId = e.streams[0].id;
+        const videoId = `remote-${peerId}-${streamId}`;
+        let remoteVideo = document.querySelector(`[data-id="${videoId}"]`);
+        if (!remoteVideo) {
+            remoteVideo = document.createElement('video');
+            remoteVideo.dataset.id = videoId;
+            remoteVideo.dataset.peer = peerId;
+            remoteVideo.autoplay = true;
+            remoteVideo.playsInline = true;
+            remoteVideo.muted = false;
+            remoteVideo.style.position = 'absolute';
+            remoteVideo.style.top = '200px';
+            remoteVideo.style.left = '200px';
+            remoteVideo.width = 320;
+            remoteVideo.height = 240;
+            stage.appendChild(remoteVideo);
+            makeInteractive(remoteVideo);
+        }
+        // Assign stream to video element
+        if (remoteVideo.srcObject !== e.streams[0]) {
             remoteVideo.srcObject = e.streams[0];
-        });
+        }
     };
 
     peer.onicecandidate = (e) => {
@@ -76,7 +95,9 @@ socket.on('signal', async ({ from, signal }) => {
     if (signal.candidate) {
         try {
             await peer.addIceCandidate(new RTCIceCandidate(signal.candidate));
-        } catch (e) {}
+        } catch (e) {
+            console.warn('Failed to add ICE candidate:', e);
+        }
     }
 });
 
@@ -256,48 +277,6 @@ socket.on('delete', ({ id }) => {
     if (el) el.remove();
 });
 
-// ---- Late joiner state restore ----
-socket.on('init', (stageState) => {
-    stageState.forEach(item => {
-        if (item.type === 'webcam') {
-            spawnWebcam(item.id, item.peerId);
-        }
-        if (item.type === 'video') spawnVideo(item.src, item.id + '-from-server');
-        if (item.type === 'image') spawnImage(item.src, item.id + '-from-server');
-        const el = document.querySelector(`[data-id="${item.id}"]`);
-        if (el) {
-            if (item.x && item.y) {
-                el.style.transform = `translate(${item.x}px, ${item.y}px)`;
-                el.dataset.x = item.x;
-                el.dataset.y = y;
-            }
-            if (item.width && item.height) {
-                el.style.width = `${item.width}px`;
-                el.style.height = `${item.height}px`;
-            }
-            if (item.filters) {
-                el.dataset.filters = JSON.stringify(item.filters);
-                updateFilters(el, false);
-            }
-        }
-    });
-});
-
-// ---- Hovered element outline for easy targeting ----
-let hoveredElement = null;
-stage.addEventListener('mouseover', (e) => {
-    if (e.target.tagName === 'VIDEO' || e.target.tagName === 'IMG') {
-        hoveredElement = e.target;
-        e.target.style.outline = '2px solid red';
-    }
-});
-stage.addEventListener('mouseout', (e) => {
-    if (e.target === hoveredElement) {
-        e.target.style.outline = 'none';
-        hoveredElement = null;
-    }
-});
-
 // -------- FILTER & DELETE KEYBOARD SHORTCUTS --------
 function updateFilters(el, send = true) {
     const filters = JSON.parse(el.dataset.filters || '{}');
@@ -366,4 +345,19 @@ document.addEventListener('keydown', (e) => {
     }
     hoveredElement.dataset.filters = JSON.stringify(filters);
     updateFilters(hoveredElement);
+});
+
+// ---- Hovered element outline for easy targeting ----
+let hoveredElement = null;
+stage.addEventListener('mouseover', (e) => {
+    if (e.target.tagName === 'VIDEO' || e.target.tagName === 'IMG') {
+        hoveredElement = e.target;
+        e.target.style.outline = '2px solid red';
+    }
+});
+stage.addEventListener('mouseout', (e) => {
+    if (e.target === hoveredElement) {
+        e.target.style.outline = 'none';
+        hoveredElement = null;
+    }
 });
