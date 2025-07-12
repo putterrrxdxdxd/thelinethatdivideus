@@ -2,6 +2,7 @@ const socket = io();
 let peers = {};
 let localStream = null;
 let highestZ = 1;
+const pendingCandidates = {}; // <-- Store candidates waiting to be added
 
 const stage = document.getElementById('stage');
 const dropZone = document.getElementById('drop-zone');
@@ -28,6 +29,7 @@ async function startPeerConnection(peerId, initiator) {
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     });
     peers[peerId] = peer;
+    pendingCandidates[peerId] = [];
 
     // Always add webcam tracks if you have them (so others can see your face)
     if (localStream) {
@@ -36,7 +38,6 @@ async function startPeerConnection(peerId, initiator) {
 
     peer.ontrack = (e) => {
         console.log(`Received track from peer ${peerId}, stream id: ${e.streams[0].id}`);
-        // Create a unique video element per peer and stream
         const streamId = e.streams[0].id;
         const videoId = `remote-${peerId}-${streamId}`;
         let remoteVideo = document.querySelector(`[data-id="${videoId}"]`);
@@ -88,17 +89,42 @@ socket.on('signal', async ({ from, signal }) => {
             const answer = await peer.createAnswer();
             await peer.setLocalDescription(answer);
             socket.emit('signal', { to: from, signal: { description: peer.localDescription } });
+            // Add any queued ICE candidates after remote desc set
+            for (const candidate of pendingCandidates[from] || []) {
+                try {
+                    await peer.addIceCandidate(candidate);
+                } catch (e) {
+                    console.warn('Failed to add queued ICE candidate', e);
+                }
+            }
+            pendingCandidates[from] = [];
         } else if (signal.description.type === 'answer') {
             if (peer.signalingState === 'have-local-offer') {
                 await peer.setRemoteDescription(new RTCSessionDescription(signal.description));
+                // Add queued ICE candidates after remote desc set
+                for (const candidate of pendingCandidates[from] || []) {
+                    try {
+                        await peer.addIceCandidate(candidate);
+                    } catch (e) {
+                        console.warn('Failed to add queued ICE candidate', e);
+                    }
+                }
+                pendingCandidates[from] = [];
             }
         }
     }
     if (signal.candidate) {
-        try {
-            await peer.addIceCandidate(new RTCIceCandidate(signal.candidate));
-        } catch (e) {
-            console.warn('Failed to add ICE candidate:', e);
+        const iceCandidate = new RTCIceCandidate(signal.candidate);
+        if (peer.remoteDescription && peer.remoteDescription.type) {
+            try {
+                await peer.addIceCandidate(iceCandidate);
+            } catch (e) {
+                console.warn('Failed to add ICE candidate:', e);
+            }
+        } else {
+            // Queue ICE candidate if remote desc not set yet
+            if (!pendingCandidates[from]) pendingCandidates[from] = [];
+            pendingCandidates[from].push(iceCandidate);
         }
     }
 });
@@ -113,7 +139,7 @@ socket.on('user-left', (userId) => {
     if (peer) {
         peer.close();
         delete peers[userId];
-        // Remove ALL remote webcam boxes for this peer
+        delete pendingCandidates[userId];
         document.querySelectorAll(`[data-peer="${userId}"]`).forEach(v => v.remove());
     }
 });
@@ -171,13 +197,11 @@ function spawnWebcam(id = null, peerId = socket.id) {
     makeInteractive(webcam);
 
     if (peerId === socket.id) {
-        // If this is *my* webcam, show my local stream
         getWebcamStream().then(s => { if (s) webcam.srcObject = s; });
     }
-    // If remote, will get stream via peer.ontrack later
 
     if (!id.includes('-from-server')) {
-        socket.emit('spawn', { type: 'webcam', id, peerId }); // Tell everyone
+        socket.emit('spawn', { type: 'webcam', id, peerId });
     }
 }
 
@@ -254,7 +278,7 @@ socket.on('filter', ({ id, filters, sender }) => {
 });
 socket.on('spawn', data => {
     if (data.type === 'webcam') {
-        spawnWebcam(data.id, data.peerId); // Show remote or local, use peerId for source
+        spawnWebcam(data.id, data.peerId);
     }
     if (data.type === 'video') spawnVideo(data.src, data.id + '-from-server');
     if (data.type === 'image') spawnImage(data.src, data.id + '-from-server');
@@ -299,12 +323,12 @@ function updateFilters(el, send = true) {
 document.addEventListener('keydown', (e) => {
     const key = e.key.toLowerCase();
     if (key === 'w') {
-        spawnWebcam(); // Spawns ANOTHER webcam box
+        spawnWebcam();
         return;
     }
     if (key === 'v') return spawnVideo();
     if (key === 'i') return spawnImage('archives/image1.jpg');
-    if (key === 'd') { // D for "Dialog": open file dialog
+    if (key === 'd') {
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = 'video/*,image/*';
