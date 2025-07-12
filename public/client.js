@@ -152,7 +152,7 @@ function spawnVideo(src = 'archives/video1.mp4', id = null) {
     if (!id) socket.emit('spawn', { type: 'video', src, id: video.dataset.id });
 }
 
-function spawnImage(src = 'archives/image1.jpg', id = null) {
+function spawnImage(src, id = null) {
     const img = document.createElement('img');
     img.dataset.id = id || Date.now();
     img.src = src;
@@ -180,6 +180,25 @@ stage.addEventListener('mouseout', (e) => {
     }
 });
 
+// 🌟 PATCHED handleFile for base64 image sync
+function handleFile(file) {
+    if (!file) return;
+
+    if (file.type.startsWith('video/')) {
+        const url = URL.createObjectURL(file);
+        spawnVideo(url);
+    } else if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const base64Image = event.target.result;
+            spawnImage(base64Image);
+        };
+        reader.readAsDataURL(file);
+    } else {
+        alert('Unsupported file type: ' + file.type);
+    }
+}
+
 window.addEventListener('dragover', (e) => {
     e.preventDefault();
     dropZone.style.display = 'flex';
@@ -190,14 +209,6 @@ window.addEventListener('drop', (e) => {
     dropZone.style.display = 'none';
     handleFile(e.dataTransfer.files[0]);
 });
-
-function handleFile(file) {
-    if (!file) return;
-    const url = URL.createObjectURL(file);
-    if (file.type.startsWith('video/')) spawnVideo(url);
-    else if (file.type.startsWith('image/')) spawnImage(url);
-    else alert('Unsupported file type: ' + file.type);
-}
 
 // 🎨 Update filters
 function updateFilters(el) {
@@ -224,7 +235,7 @@ document.addEventListener('keydown', (e) => {
 
     if (key === 'w') return spawnWebcam();
     if (key === 'v') return spawnVideo();
-    if (key === 'i') return spawnImage();
+    if (key === 'i') return spawnImage('archives/image1.jpg');
     if (key === 'd') {
         const input = document.createElement('input');
         input.type = 'file';
@@ -287,7 +298,7 @@ socket.on('filter', ({ id, filters }) => {
     }
 });
 
-// 🔄 Sync
+// 🔄 Sync archives
 socket.on('spawn', data => {
     if (data.type === 'webcam') spawnWebcam(data.id);
     if (data.type === 'video') spawnVideo(data.src, data.id);
@@ -312,4 +323,3 @@ socket.on('delete', ({ id }) => {
     const el = document.querySelector(`[data-id="${id}"]`);
     if (el) el.remove();
 });
-
