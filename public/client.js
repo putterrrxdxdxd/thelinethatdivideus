@@ -2,11 +2,13 @@ const socket = io();
 let peers = {};
 let localStream = null;
 let highestZ = 1;
+let isSharingWebcam = false;
+let webcamId = null; // Track our webcam element id
 
 const stage = document.getElementById('stage');
 const dropZone = document.getElementById('drop-zone');
 
-// 📷 Get webcam stream
+// 📷 Get webcam stream (only if sharing)
 async function getWebcamStream() {
     if (localStream) return localStream;
     try {
@@ -28,8 +30,13 @@ async function startPeerConnection(peerId, initiator) {
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     });
     peers[peerId] = peer;
-    const stream = await getWebcamStream();
-    if (stream) stream.getTracks().forEach(track => peer.addTrack(track, stream));
+
+    // Only add webcam tracks if we are sharing webcam
+    if (isSharingWebcam && localStream) {
+        localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
+    }
+
+    // Show remote stream
     peer.ontrack = (e) => {
         let remoteVideo = document.querySelector(`[data-peer="${peerId}"]`);
         if (!remoteVideo) {
@@ -49,17 +56,20 @@ async function startPeerConnection(peerId, initiator) {
             makeInteractive(remoteVideo);
         }
     };
+
     peer.onicecandidate = (e) => {
         if (e.candidate) {
             socket.emit('signal', { to: peerId, signal: { candidate: e.candidate } });
         }
     };
+
     if (initiator) {
         const offer = await peer.createOffer();
         await peer.setLocalDescription(offer);
         socket.emit('signal', { to: peerId, signal: { description: peer.localDescription } });
     }
 }
+
 socket.on('signal', async ({ from, signal }) => {
     let peer = peers[from];
     if (!peer) {
@@ -130,8 +140,12 @@ function makeInteractive(el) {
 
 // ---------- Spawn Elements ----------
 function spawnWebcam(id = null) {
+    if (isSharingWebcam) return; // Prevent spawning multiple webcams
+    isSharingWebcam = true;
+    webcamId = id || Date.now();
+
     const webcam = document.createElement('video');
-    webcam.dataset.id = id || Date.now();
+    webcam.dataset.id = webcamId;
     webcam.autoplay = true;
     webcam.playsInline = true;
     webcam.muted = true;
@@ -142,9 +156,11 @@ function spawnWebcam(id = null) {
     webcam.height = 240;
     stage.appendChild(webcam);
     makeInteractive(webcam);
+
     getWebcamStream().then(s => { if (s) webcam.srcObject = s; });
-    if (!id) socket.emit('spawn', { type: 'webcam', id: webcam.dataset.id });
+    if (!id) socket.emit('spawn', { type: 'webcam', id: webcamId });
 }
+
 function spawnVideo(src = 'archives/video1.mp4', id = null) {
     const video = document.createElement('video');
     video.dataset.id = id || Date.now();
@@ -162,6 +178,7 @@ function spawnVideo(src = 'archives/video1.mp4', id = null) {
     makeInteractive(video);
     if (!id) socket.emit('spawn', { type: 'video', src, id: video.dataset.id });
 }
+
 function spawnImage(src, id = null) {
     const img = document.createElement('img');
     img.dataset.id = id || Date.now();
@@ -179,7 +196,13 @@ function spawnImage(src, id = null) {
 // ---- Late joiner state restore ----
 socket.on('init', (stageState) => {
     stageState.forEach(item => {
-        if (item.type === 'webcam') spawnWebcam(item.id);
+        if (item.type === 'webcam') {
+            // Only spawn webcam locally if it's yours (matching your webcamId)
+            if (item.id === webcamId) {
+                spawnWebcam(item.id);
+            }
+            // Remote webcams will be shown via WebRTC ontrack events
+        }
         if (item.type === 'video') spawnVideo(item.src, item.id);
         if (item.type === 'image') spawnImage(item.src, item.id);
         const el = document.querySelector(`[data-id="${item.id}"]`);
@@ -251,7 +274,10 @@ socket.on('filter', ({ id, filters, sender }) => {
     }
 });
 socket.on('spawn', data => {
-    if (data.type === 'webcam') spawnWebcam(data.id);
+    if (data.type === 'webcam') {
+        // Only spawn local webcam for ourselves, remote will show via ontrack.
+        if (data.id === webcamId) spawnWebcam(data.id);
+    }
     if (data.type === 'video') spawnVideo(data.src, data.id);
     if (data.type === 'image') spawnImage(data.src, data.id);
 });
