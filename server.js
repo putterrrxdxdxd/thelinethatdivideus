@@ -29,7 +29,7 @@ app.get('/', (req, res) => {
 });
 
 // 🌍 Stage state for syncing new users
-let stageState = [];
+let stageState = []; // [{ id, type, src?, x, y, width, height, filters }]
 
 // 🌐 Socket.IO connections
 io.on('connection', (socket) => {
@@ -38,11 +38,27 @@ io.on('connection', (socket) => {
     // Send current stage state to the new user
     socket.emit('init', stageState);
 
+    // Tell existing users about the new user
+    const otherUsers = Array.from(io.sockets.sockets.keys()).filter(id => id !== socket.id);
+    socket.emit('users', otherUsers);
+    socket.broadcast.emit('users', [socket.id]);
+
     // 🆕 Spawn new element
     socket.on('spawn', (data) => {
         console.log('📦 Spawn:', data);
-        stageState.push(data);
-        socket.broadcast.emit('spawn', data);
+        if (!stageState.find(el => el.id === data.id)) {
+            stageState.push({
+                id: data.id,
+                type: data.type,
+                src: data.src || null,
+                x: 0,
+                y: 0,
+                width: 320,
+                height: 240,
+                filters: {}
+            });
+            socket.broadcast.emit('spawn', data);
+        }
     });
 
     // ↔️ Move element
@@ -90,6 +106,8 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         console.log(`👋 User disconnected: ${socket.id}`);
         io.emit('user-left', socket.id);
+        // Optional: Clean up remote webcams (if tied to socket.id)
+        stageState = stageState.filter(el => el.id !== `remote-${socket.id}`);
     });
 });
 
@@ -97,4 +115,3 @@ io.on('connection', (socket) => {
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running at http://0.0.0.0:${PORT}`);
 });
-
