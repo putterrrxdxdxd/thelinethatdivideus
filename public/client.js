@@ -28,17 +28,8 @@ async function startPeerConnection(peerId, initiator) {
     stream.getTracks().forEach(track => peer.addTrack(track, stream));
 
     peer.ontrack = (e) => {
-        const remoteVideo = document.createElement('video');
-        remoteVideo.autoplay = true;
-        remoteVideo.playsInline = true;
-        remoteVideo.srcObject = e.streams[0];
-        remoteVideo.style.position = 'absolute';
-        remoteVideo.style.top = '200px';
-        remoteVideo.style.left = '200px';
-        remoteVideo.width = 320;
-        remoteVideo.height = 240;
-        stage.appendChild(remoteVideo);
-        makeInteractive(remoteVideo);
+        console.log('🎥 Received remote stream');
+        spawnWebcam(Date.now(), e.streams[0]); // 🆕 Attach remote peer stream
     };
 
     peer.onicecandidate = (e) => {
@@ -116,12 +107,12 @@ function makeInteractive(el) {
         });
 }
 
-function spawnWebcam(id = null) {
+function spawnWebcam(id = null, peerStream = null) {
     const webcam = document.createElement('video');
     webcam.dataset.id = id || Date.now();
     webcam.autoplay = true;
     webcam.playsInline = true;
-    webcam.muted = true;
+    webcam.muted = !peerStream; // Local webcam muted, remote unmuted
     webcam.style.position = 'absolute';
     webcam.style.top = '100px';
     webcam.style.left = '100px';
@@ -130,8 +121,12 @@ function spawnWebcam(id = null) {
     stage.appendChild(webcam);
     makeInteractive(webcam);
 
-    getWebcamStream().then(s => webcam.srcObject = s);
-    if (!id) socket.emit('spawn', { type: 'webcam', id: webcam.dataset.id });
+    if (peerStream) {
+        webcam.srcObject = peerStream; // 🆕 Remote stream
+    } else {
+        getWebcamStream().then(s => webcam.srcObject = s);
+        socket.emit('spawn', { type: 'webcam', id: webcam.dataset.id });
+    }
 }
 
 function spawnVideo(src = 'archives/video1.mp4', id = null) {
@@ -210,7 +205,7 @@ window.addEventListener('drop', (e) => {
     handleFile(e.dataTransfer.files[0]);
 });
 
-// 🎨 Update filters
+// 🎨 Update filters (no flicker)
 function updateFilters(el) {
     const filters = JSON.parse(el.dataset.filters || '{}');
     const filterStrings = [];
