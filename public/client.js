@@ -226,7 +226,6 @@ function updateFilters(el) {
     el.style.filter = filterStrings.join(' ');
     el.style.opacity = filters.opacity !== undefined ? filters.opacity : 1;
 
-    socket.emit('filter', { id: el.dataset.id, filters });
     socket.emit('filter', { id: el.dataset.id, filters, sender: socket.id });
 }
 
@@ -291,9 +290,8 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ☑️ Receive filters from others
-socket.on('filter', ({ id, filters }) => {
 socket.on('filter', ({ id, filters, sender }) => {
-    if (sender === socket.id) return; // 🛡️ Skip self
+    if (sender === socket.id) return; // 🛡️ Skip self updates
     const el = document.querySelector(`[data-id="${id}"]`);
     if (el) {
         el.dataset.filters = JSON.stringify(filters);
