@@ -227,6 +227,7 @@ function updateFilters(el) {
     el.style.opacity = filters.opacity !== undefined ? filters.opacity : 1;
 
     socket.emit('filter', { id: el.dataset.id, filters });
+    socket.emit('filter', { id: el.dataset.id, filters, sender: socket.id });
 }
 
 // 🎹 Keyboard shortcuts
@@ -291,6 +292,8 @@ document.addEventListener('keydown', (e) => {
 
 // ☑️ Receive filters from others
 socket.on('filter', ({ id, filters }) => {
+socket.on('filter', ({ id, filters, sender }) => {
+    if (sender === socket.id) return; // 🛡️ Skip self
     const el = document.querySelector(`[data-id="${id}"]`);
     if (el) {
         el.dataset.filters = JSON.stringify(filters);
