@@ -24,12 +24,13 @@ async function startPeerConnection(peerId, initiator) {
     });
 
     peers[peerId] = peer;
+
     const stream = await getWebcamStream();
     stream.getTracks().forEach(track => peer.addTrack(track, stream));
 
     peer.ontrack = (e) => {
         console.log('🎥 Received remote stream');
-        spawnWebcam(Date.now(), e.streams[0]); // 🆕 Attach remote peer stream
+        spawnWebcam(Date.now(), e.streams[0], true);
     };
 
     peer.onicecandidate = (e) => {
@@ -64,7 +65,12 @@ socket.on('signal', async ({ from, signal }) => {
     }
 });
 
-socket.on('users', (users) => users.forEach(userId => startPeerConnection(userId, true)));
+socket.on('users', (users) => {
+    users.forEach(userId => {
+        if (!peers[userId]) startPeerConnection(userId, true);
+    });
+});
+
 socket.on('user-left', (userId) => {
     if (peers[userId]) {
         peers[userId].close();
@@ -107,12 +113,12 @@ function makeInteractive(el) {
         });
 }
 
-function spawnWebcam(id = null, peerStream = null) {
+function spawnWebcam(id = null, peerStream = null, remote = false) {
     const webcam = document.createElement('video');
     webcam.dataset.id = id || Date.now();
     webcam.autoplay = true;
     webcam.playsInline = true;
-    webcam.muted = !peerStream; // Local webcam muted, remote unmuted
+    webcam.muted = !peerStream; // Local muted, remote unmuted
     webcam.style.position = 'absolute';
     webcam.style.top = '100px';
     webcam.style.left = '100px';
@@ -122,10 +128,10 @@ function spawnWebcam(id = null, peerStream = null) {
     makeInteractive(webcam);
 
     if (peerStream) {
-        webcam.srcObject = peerStream; // 🆕 Remote stream
+        webcam.srcObject = peerStream;
     } else {
         getWebcamStream().then(s => webcam.srcObject = s);
-        socket.emit('spawn', { type: 'webcam', id: webcam.dataset.id });
+        if (!remote) socket.emit('spawn', { type: 'webcam', id: webcam.dataset.id });
     }
 }
 
@@ -175,38 +181,8 @@ stage.addEventListener('mouseout', (e) => {
     }
 });
 
-// 🌟 PATCHED handleFile for base64 image sync
-function handleFile(file) {
-    if (!file) return;
-
-    if (file.type.startsWith('video/')) {
-        const url = URL.createObjectURL(file);
-        spawnVideo(url);
-    } else if (file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            const base64Image = event.target.result;
-            spawnImage(base64Image);
-        };
-        reader.readAsDataURL(file);
-    } else {
-        alert('Unsupported file type: ' + file.type);
-    }
-}
-
-window.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    dropZone.style.display = 'flex';
-});
-window.addEventListener('dragleave', () => dropZone.style.display = 'none');
-window.addEventListener('drop', (e) => {
-    e.preventDefault();
-    dropZone.style.display = 'none';
-    handleFile(e.dataTransfer.files[0]);
-});
-
-// 🎨 Update filters (no flicker)
-function updateFilters(el) {
+// 🎨 Update filters
+function updateFilters(el, send = true) {
     const filters = JSON.parse(el.dataset.filters || '{}');
     const filterStrings = [];
 
@@ -221,68 +197,10 @@ function updateFilters(el) {
     el.style.filter = filterStrings.join(' ');
     el.style.opacity = filters.opacity !== undefined ? filters.opacity : 1;
 
-    socket.emit('filter', { id: el.dataset.id, filters, sender: socket.id });
+    if (send) {
+        socket.emit('filter', { id: el.dataset.id, filters, sender: socket.id });
+    }
 }
-
-// 🎹 Keyboard shortcuts
-document.addEventListener('keydown', (e) => {
-    const key = e.key.toLowerCase();
-
-    if (key === 'w') return spawnWebcam();
-    if (key === 'v') return spawnVideo();
-    if (key === 'i') return spawnImage('archives/image1.jpg');
-    if (key === 'd') {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = 'video/*,image/*';
-        input.onchange = ev => handleFile(ev.target.files[0]);
-        input.click();
-        return;
-    }
-    if (key === 'x' && hoveredElement) {
-        const id = hoveredElement.dataset.id;
-        hoveredElement.remove();
-        socket.emit('delete', { id });
-        hoveredElement = null;
-        return;
-    }
-
-    if (!hoveredElement) return;
-
-    const filters = JSON.parse(hoveredElement.dataset.filters || '{}');
-
-    // Filter toggles
-    if (key === 'g') filters.grayscale = filters.grayscale ? 0 : 100;
-    if (key === 'b') filters.blur = filters.blur ? 0 : 5;
-    if (key === 'i') filters.invert = filters.invert ? 0 : 100;
-    if (key === 'c') filters.contrast = filters.contrast ? 0 : 150;
-    if (key === 'l') filters.brightness = filters.brightness ? 0 : 150;
-
-    // 🔥 Intensity
-    if (key === '[') {
-        for (const k in filters) {
-            if (filters[k] > 0 && k !== 'opacity') filters[k] = Math.max(0, filters[k] - 10);
-        }
-    }
-    if (key === ']') {
-        for (const k in filters) {
-            if (filters[k] > 0 && k !== 'opacity') filters[k] = Math.min(200, filters[k] + 10);
-        }
-    }
-
-    // 🎛 Opacity control
-    if (e.key === 'ArrowUp') {
-        filters.opacity = parseFloat(filters.opacity) || 1;
-        filters.opacity = Math.min(filters.opacity + 0.1, 1);
-    }
-    if (e.key === 'ArrowDown') {
-        filters.opacity = parseFloat(filters.opacity) || 1;
-        filters.opacity = Math.max(filters.opacity - 0.1, 0);
-    }
-
-    hoveredElement.dataset.filters = JSON.stringify(filters);
-    updateFilters(hoveredElement);
-});
 
 // ☑️ Receive filters from others
 socket.on('filter', ({ id, filters, sender }) => {
@@ -290,13 +208,13 @@ socket.on('filter', ({ id, filters, sender }) => {
     const el = document.querySelector(`[data-id="${id}"]`);
     if (el) {
         el.dataset.filters = JSON.stringify(filters);
-        updateFilters(el);
+        updateFilters(el, false); // Don’t re-emit
     }
 });
 
 // 🔄 Sync archives
 socket.on('spawn', data => {
-    if (data.type === 'webcam') spawnWebcam(data.id);
+    if (data.type === 'webcam') spawnWebcam(data.id, null, true);
     if (data.type === 'video') spawnVideo(data.src, data.id);
     if (data.type === 'image') spawnImage(data.src, data.id);
 });
@@ -319,3 +237,4 @@ socket.on('delete', ({ id }) => {
     const el = document.querySelector(`[data-id="${id}"]`);
     if (el) el.remove();
 });
+
