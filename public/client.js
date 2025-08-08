@@ -6,15 +6,15 @@ const socket = io({
 });
 
 let dailyCall = null;
-let localStream = null;
 let highestZ = 1;
 let participants = new Map();
 let isConnected = false;
+let hoveredElement = null;
 
 const stage = document.getElementById('stage');
 const dropZone = document.getElementById('drop-zone');
 
-// Socket.IO Connection Management
+// ---------------- CONNECTION STATUS ----------------
 function updateConnectionStatus(status, text) {
     const statusEl = document.getElementById('connection-status');
     const textEl = document.getElementById('status-text');
@@ -59,65 +59,46 @@ socket.on('reconnect_failed', () => {
     alert('Connection lost. Please refresh the page.');
 });
 
-// 📷 Get webcam stream using Daily.co
-async function getWebcamStream() {
-    if (localStream) return localStream;
-    try {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            throw new Error('Webcam not supported');
-        }
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        return localStream;
-    } catch (err) {
-        console.error('Webcam error:', err);
-        alert('Could not access webcam: ' + err.message);
-    }
-}
-
-// 🌐 Daily.co connection management
+// ---------------- DAILY.CO INIT ----------------
 async function initializeDailyCall() {
     if (dailyCall) return dailyCall;
-    
-    // Use room URL from configuration
-    const roomUrl = window.DAILY_CONFIG?.roomUrl || 'https://your-daily-domain.daily.co/your-room-name';
-    
+
+    const roomUrl = window.DAILY_CONFIG?.roomUrl;
+    if (!roomUrl) {
+        alert("❌ No Daily.co room URL configured");
+        return;
+    }
+
     console.log('🔗 Connecting to Daily.co room:', roomUrl);
-    
-    // Create Daily.co call object
+
     dailyCall = window.DailyIframe.createFrame(document.createElement('div'), {
-        iframeStyle: {
-            width: '100%',
-            height: '100%',
-            border: '0',
-            borderRadius: '12px',
-        },
-        showLeaveButton: true,
+        iframeStyle: { width: '100%', height: '100%', border: '0' }
     });
 
-    // Set up event listeners
     dailyCall.on('joined-meeting', () => {
         console.log('✅ Joined Daily.co meeting');
-        // Don't auto-spawn webcam here - let Daily.co handle participants
     });
 
     dailyCall.on('participant-joined', (event) => {
         console.log('👤 Participant joined:', event.participant);
         participants.set(event.participant.session_id, event.participant);
-        
-        // Spawn webcam for all participants (including local)
+        spawnWebcam();
+    });
+
+    dailyCall.on('track-started', (event) => {
+        console.log('🎥 Track started:', event.participant);
         spawnWebcam();
     });
 
     dailyCall.on('participant-updated', (event) => {
         console.log('🔄 Participant updated:', event.participant);
         participants.set(event.participant.session_id, event.participant);
-        updateRemoteParticipant(event.participant);
     });
 
     dailyCall.on('participant-left', (event) => {
         console.log('👋 Participant left:', event.participant);
         participants.delete(event.participant.session_id);
-        removeRemoteParticipant(event.participant.session_id);
+        removeElement(`daily-webcam-${event.participant.session_id}`);
     });
 
     dailyCall.on('camera-error', (event) => {
@@ -135,116 +116,174 @@ async function initializeDailyCall() {
         alert('Daily.co error: ' + event.errorMsg);
     });
 
-    try {
-        await dailyCall.join({ url: roomUrl });
-        console.log('✅ Successfully joined Daily.co room');
-        
-        // Get local participant info
-        const localParticipant = dailyCall.participants().local;
-        if (localParticipant) {
-            console.log('👤 Local participant:', localParticipant);
-            participants.set(localParticipant.session_id, localParticipant);
+    await dailyCall.join({ url: roomUrl });
+
+    const localParticipant = dailyCall.participants().local;
+    if (localParticipant) {
+        console.log('👤 Local participant:', localParticipant);
+        participants.set(localParticipant.session_id, localParticipant);
+    }
+    return dailyCall;
+}
+
+// ---------------- SPAWN WEBCAM ----------------
+function spawnWebcam() {
+    if (!dailyCall) {
+        console.log('❌ Daily.co not initialized - cannot spawn webcam');
+        return;
+    }
+
+    const allParticipants = dailyCall.participants();
+    console.log('📊 All participants:', allParticipants);
+
+    Object.values(allParticipants).forEach(participant => {
+        const participantId = `daily-webcam-${participant.session_id}`;
+        if (document.querySelector(`[data-id="${participantId}"]`)) {
+            console.log('📹 Webcam already exists for participant:', participant.session_id);
+            return;
         }
-        
-        return dailyCall;
-    } catch (error) {
-        console.error('❌ Failed to join Daily.co call:', error);
-        alert('Failed to join video call: ' + (error.errorMsg || error.message));
-        return null;
+
+        console.log('📹 Spawning webcam for participant:', participant.session_id, participant.local ? '(local)' : '(remote)');
+
+        const container = document.createElement('div');
+        container.dataset.id = participantId;
+        container.dataset.filters = '{}';
+        container.style.position = 'absolute';
+        container.style.top = `${100 + Math.floor(Math.random() * 200)}px`;
+        container.style.left = `${100 + Math.floor(Math.random() * 200)}px`;
+        container.style.width = '320px';
+        container.style.height = '240px';
+        container.style.borderRadius = '8px';
+        container.style.overflow = 'hidden';
+        container.style.border = participant.local ? '2px solid #28a745' : '2px solid #007bff';
+
+        const nameLabel = document.createElement('div');
+        nameLabel.textContent = participant.user_name || (participant.local ? 'You' : 'Participant');
+        nameLabel.style.position = 'absolute';
+        nameLabel.style.top = '-20px';
+        nameLabel.style.background = 'rgba(0,0,0,0.7)';
+        nameLabel.style.color = 'white';
+        nameLabel.style.padding = '2px 6px';
+        nameLabel.style.fontSize = '10px';
+        nameLabel.style.borderRadius = '3px';
+
+        container.appendChild(nameLabel);
+        stage.appendChild(container);
+        makeInteractive(container);
+
+        // Attach Daily.co tracks
+        try {
+            dailyCall.attachParticipantTracks(
+                participant.session_id,
+                container,
+                { video: true, audio: !participant.local }
+            );
+            console.log('✅ Video tracks attached for participant:', participant.session_id);
+        } catch (error) {
+            console.error('❌ Failed to attach tracks for participant:', participant.session_id, error);
+        }
+    });
+
+    if (isConnected) {
+        socket.emit('spawn', { type: 'webcam', id: 'daily-webcam', peerId: socket.id });
+        console.log('📤 Broadcasted webcam spawn to other users');
     }
 }
 
-// Spawn remote participant video
-function spawnRemoteParticipant(participant) {
-    if (participant.local) return; // Don't spawn local participant
-    
-    console.log('👤 Spawning remote participant:', participant.session_id);
-    
-    const participantId = `daily-webcam-${participant.session_id}`;
-    if (document.querySelector(`[data-id="${participantId}"]`)) {
-        console.log('👤 Participant webcam already exists:', participantId);
-        return;
-    }
+// ---------------- MEDIA SPAWN ----------------
+function spawnVideo(src = 'archives/video1.mp4', id = null) {
+    id = id || `video-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    if (document.querySelector(`[data-id="${id}"]`)) return;
 
-    const webcam = document.createElement('video');
-    webcam.dataset.id = participantId;
-    webcam.dataset.participant = participant.session_id;
-    webcam.dataset.local = false;
-    webcam.autoplay = true;
-    webcam.playsInline = true;
-    webcam.muted = true;
-    webcam.style.position = 'absolute';
-    webcam.style.top = `${200 + Math.floor(Math.random() * 200)}px`;
-    webcam.style.left = `${200 + Math.floor(Math.random() * 200)}px`;
-    webcam.width = 320;
-    webcam.height = 240;
-    webcam.style.objectFit = 'cover';
-    webcam.style.borderRadius = '8px';
-    webcam.style.border = '2px solid #007bff';
+    const video = document.createElement('video');
+    video.dataset.id = id;
+    video.dataset.filters = '{}';
+    video.src = src;
+    video.autoplay = true;
+    video.loop = true;
+    video.muted = true;
+    video.controls = true;
+    video.style.position = 'absolute';
+    video.style.top = '150px';
+    video.style.left = '150px';
+    video.width = 320;
+    video.height = 240;
+    video.style.borderRadius = '8px';
+    stage.appendChild(video);
+    makeInteractive(video);
 
-    // Add participant name label
-    const nameLabel = document.createElement('div');
-    nameLabel.textContent = participant.user_name || 'Remote Participant';
-    nameLabel.style.position = 'absolute';
-    nameLabel.style.top = '-20px';
-    nameLabel.style.left = '0';
-    nameLabel.style.background = 'rgba(0,0,0,0.7)';
-    nameLabel.style.color = 'white';
-    nameLabel.style.padding = '2px 6px';
-    nameLabel.style.fontSize = '10px';
-    nameLabel.style.borderRadius = '3px';
-
-    const container = document.createElement('div');
-    container.style.position = 'relative';
-    container.appendChild(webcam);
-    container.appendChild(nameLabel);
-
-    stage.appendChild(container);
-    makeInteractive(container);
-
-    // Set video source from Daily.co participant
-    if (participant.video) {
-        webcam.srcObject = participant.video;
-        console.log('✅ Remote participant video stream attached:', participant.session_id);
-    } else {
-        console.log('⚠️ No video stream available for participant:', participant.session_id);
+    if (!id.includes('-from-server') && isConnected) {
+        socket.emit('spawn', { type: 'video', src, id });
     }
 }
 
-// Update remote participant video
-function updateRemoteParticipant(participant) {
-    const participantId = `daily-webcam-${participant.session_id}`;
-    const container = document.querySelector(`[data-id="${participantId}"]`);
-    if (!container) {
-        console.log('⚠️ Container not found for participant update:', participant.session_id);
-        return;
-    }
+function spawnImage(src, id = null) {
+    id = id || `image-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    if (document.querySelector(`[data-id="${id}"]`)) return;
 
-    const video = container.querySelector('video');
-    if (video && participant.video) {
-        video.srcObject = participant.video;
-        console.log('🔄 Updated video stream for participant:', participant.session_id);
-    }
+    const img = document.createElement('img');
+    img.dataset.id = id;
+    img.dataset.filters = '{}';
+    img.src = src;
+    img.style.position = 'absolute';
+    img.style.top = '200px';
+    img.style.left = '200px';
+    img.width = 320;
+    img.height = 240;
+    img.style.borderRadius = '8px';
+    stage.appendChild(img);
+    makeInteractive(img);
 
-    const nameLabel = container.querySelector('div');
-    if (nameLabel) {
-        nameLabel.textContent = participant.user_name || 'Remote Participant';
-    }
-}
-
-// Remove remote participant video
-function removeRemoteParticipant(sessionId) {
-    const participantId = `daily-webcam-${sessionId}`;
-    const container = document.querySelector(`[data-id="${participantId}"]`);
-    if (container) {
-        console.log('🗑️ Removing participant webcam:', sessionId);
-        container.remove();
-    } else {
-        console.log('⚠️ Participant webcam not found for removal:', sessionId);
+    if (!id.includes('-from-server') && isConnected) {
+        socket.emit('spawn', { type: 'image', src, id });
     }
 }
 
-// --------- Move/Resize/Filter/Delete ---------
+// ---------------- SOCKET EVENTS ----------------
+socket.on('spawn', (data) => {
+    console.log('📥 Received spawn event:', data);
+    if (data.type === 'webcam') spawnWebcam();
+    if (data.type === 'video') spawnVideo(data.src, data.id + '-from-server');
+    if (data.type === 'image') spawnImage(data.src, data.id + '-from-server');
+});
+
+socket.on('move', ({ id, x, y }) => {
+    const el = document.querySelector(`[data-id="${id}"]`);
+    if (el) {
+        el.style.transform = `translate(${x}px, ${y}px)`;
+        el.dataset.x = x;
+        el.dataset.y = y;
+    }
+});
+
+socket.on('resize', ({ id, width, height }) => {
+    const el = document.querySelector(`[data-id="${id}"]`);
+    if (el) {
+        el.style.width = `${width}px`;
+        el.style.height = `${height}px`;
+    }
+});
+
+socket.on('filter', ({ id, filters, sender }) => {
+    if (sender === socket.id) return;
+    const el = document.querySelector(`[data-id="${id}"]`);
+    if (el) {
+        el.dataset.filters = JSON.stringify(filters);
+        updateFilters(el, false);
+    }
+});
+
+socket.on('delete', ({ id }) => removeElement(id));
+
+function removeElement(id) {
+    const el = document.querySelector(`[data-id="${id}"]`);
+    if (el) {
+        console.log('🗑️ Removing element:', id);
+        el.remove();
+    }
+}
+
+// ---------------- INTERACT.JS ----------------
 function bringToFront(el) {
     highestZ++;
     el.style.zIndex = highestZ;
@@ -284,119 +323,23 @@ function makeInteractive(el) {
         });
 }
 
-// ---------- SPAWN WEBCAM: using Daily.co participants
-function spawnWebcam(id = null, peerId = socket.id) {
-    if (!dailyCall) {
-        console.log('❌ Daily.co not initialized - cannot spawn webcam');
-        return;
+// ---------------- FILTERS ----------------
+function updateFilters(el, send = true) {
+    const filters = JSON.parse(el.dataset.filters || '{}');
+    const filterStrings = [];
+    for (const [name, value] of Object.entries(filters)) {
+        if (name === 'grayscale') filterStrings.push(`grayscale(${value}%)`);
+        if (name === 'blur') filterStrings.push(`blur(${value}px)`);
+        if (name === 'brightness') filterStrings.push(`brightness(${value}%)`);
+        if (name === 'contrast') filterStrings.push(`contrast(${value}%)`);
+        if (name === 'invert') filterStrings.push(`invert(${value}%)`);
     }
-    
-    // Get all participants (including local)
-    const allParticipants = dailyCall.participants();
-    console.log('📊 All participants:', allParticipants);
-    
-    // Spawn webcam for each participant
-    Object.values(allParticipants).forEach(participant => {
-        const participantId = `daily-webcam-${participant.session_id}`;
-        
-        // Check if webcam already exists for this participant
-        if (document.querySelector(`[data-id="${participantId}"]`)) {
-            console.log('📹 Webcam already exists for participant:', participant.session_id);
-            return;
-        }
-        
-        console.log('📹 Spawning webcam for participant:', participant.session_id, participant.local ? '(local)' : '(remote)');
-        
-        const webcam = document.createElement('video');
-        webcam.dataset.id = participantId;
-        webcam.dataset.participant = participant.session_id;
-        webcam.dataset.local = participant.local;
-        webcam.autoplay = true;
-        webcam.playsInline = true;
-        webcam.muted = participant.local; // Mute local participant
-        webcam.style.position = 'absolute';
-        webcam.style.top = `${100 + Math.floor(Math.random() * 200)}px`;
-        webcam.style.left = `${100 + Math.floor(Math.random() * 200)}px`;
-        webcam.width = 320;
-        webcam.height = 240;
-        webcam.style.objectFit = 'cover';
-        webcam.style.borderRadius = '8px';
-        webcam.style.border = participant.local ? '2px solid #28a745' : '2px solid #007bff';
-        
-        // Add participant name label
-        const nameLabel = document.createElement('div');
-        nameLabel.textContent = participant.user_name || (participant.local ? 'You' : 'Participant');
-        nameLabel.style.position = 'absolute';
-        nameLabel.style.top = '-20px';
-        nameLabel.style.left = '0';
-        nameLabel.style.background = 'rgba(0,0,0,0.7)';
-        nameLabel.style.color = 'white';
-        nameLabel.style.padding = '2px 6px';
-        nameLabel.style.fontSize = '10px';
-        nameLabel.style.borderRadius = '3px';
-        
-        const container = document.createElement('div');
-        container.style.position = 'relative';
-        container.appendChild(webcam);
-        container.appendChild(nameLabel);
-        
-        stage.appendChild(container);
-        makeInteractive(container);
-        
-        // Set video source from Daily.co participant
-        if (participant.video) {
-            webcam.srcObject = participant.video;
-            console.log('✅ Video stream attached for participant:', participant.session_id);
-        } else {
-            console.log('⚠️ No video stream available for participant:', participant.session_id);
-        }
-    });
-    
-    // Broadcast spawn to other users via Socket.IO
-    if (isConnected) {
-        socket.emit('spawn', { type: 'webcam', id: 'daily-webcam', peerId });
-        console.log('📤 Broadcasted webcam spawn to other users');
-    }
+    el.style.filter = filterStrings.join(' ');
+    el.style.opacity = filters.opacity !== undefined ? filters.opacity : 1;
+    if (send && isConnected) socket.emit('filter', { id: el.dataset.id, filters, sender: socket.id });
 }
 
-// ---- Spawn other media ----
-function spawnVideo(src = 'archives/video1.mp4', id = null) {
-    id = id || `video-${Date.now()}`;
-    if (document.querySelector(`[data-id="${id}"]`)) return;
-    const video = document.createElement('video');
-    video.dataset.id = id;
-    video.src = src;
-    video.autoplay = true;
-    video.loop = true;
-    video.muted = true;
-    video.controls = true;
-    video.style.position = 'absolute';
-    video.style.top = '150px';
-    video.style.left = '150px';
-    video.width = 320;
-    video.height = 240;
-    stage.appendChild(video);
-    makeInteractive(video);
-    if (!id.includes('-from-server') && isConnected) socket.emit('spawn', { type: 'video', src, id });
-}
-
-function spawnImage(src, id = null) {
-    id = id || `image-${Date.now()}`;
-    if (document.querySelector(`[data-id="${id}"]`)) return;
-    const img = document.createElement('img');
-    img.dataset.id = id;
-    img.src = src;
-    img.style.position = 'absolute';
-    img.style.top = '200px';
-    img.style.left = '200px';
-    img.width = 320;
-    img.height = 240;
-    stage.appendChild(img);
-    makeInteractive(img);
-    if (!id.includes('-from-server') && isConnected) socket.emit('spawn', { type: 'image', src, id });
-}
-
-// -------- File and Drag-and-Drop handling --------
+// ---------------- FILE DROP ----------------
 function handleFile(file) {
     if (!file) return;
     if (file.type.startsWith('video/')) {
@@ -415,82 +358,30 @@ window.addEventListener('dragover', (e) => {
     e.preventDefault();
     dropZone.style.display = 'flex';
 });
-
 window.addEventListener('dragleave', () => dropZone.style.display = 'none');
-
 window.addEventListener('drop', (e) => {
     e.preventDefault();
     dropZone.style.display = 'none';
     for (const file of e.dataTransfer.files) handleFile(file);
 });
 
-// ---------- Collaborative events ----------
-socket.on('filter', ({ id, filters, sender }) => {
-    if (sender === socket.id) return;
-    const el = document.querySelector(`[data-id="${id}"]`);
-    if (el) {
-        el.dataset.filters = JSON.stringify(filters);
-        updateFilters(el, false);
-    }
-});
-
-socket.on('spawn', (data) => {
-    if (data.type === 'webcam') {
-        spawnWebcam(data.id, data.peerId);
-    } else if (data.type === 'video') {
-        spawnVideo(data.src, data.id);
-    } else if (data.type === 'image') {
-        spawnImage(data.src, data.id);
-    }
-});
-
-socket.on('move', ({ id, x, y }) => {
-    const el = document.querySelector(`[data-id="${id}"]`);
-    if (el) {
-        el.style.transform = `translate(${x}px, ${y}px)`;
-        el.dataset.x = x;
-        el.dataset.y = y;
-    }
-});
-
-socket.on('resize', ({ id, width, height }) => {
-    const el = document.querySelector(`[data-id="${id}"]`);
-    if (el) {
-        el.style.width = `${width}px`;
-        el.style.height = `${height}px`;
-    }
-});
-
-socket.on('delete', ({ id }) => {
-    const el = document.querySelector(`[data-id="${id}"]`);
-    if (el) el.remove();
-});
-
-// -------- FILTER & DELETE KEYBOARD SHORTCUTS --------
-function updateFilters(el, send = true) {
-    const filters = JSON.parse(el.dataset.filters || '{}');
-    const filterStrings = [];
-    for (const [name, value] of Object.entries(filters)) {
-        if (name === 'grayscale') filterStrings.push(`grayscale(${value}%)`);
-        if (name === 'blur') filterStrings.push(`blur(${value}px)`);
-        if (name === 'brightness') filterStrings.push(`brightness(${value}%)`);
-        if (name === 'contrast') filterStrings.push(`contrast(${value}%)`);
-        if (name === 'invert') filterStrings.push(`invert(${value}%)`);
-    }
-    el.style.filter = filterStrings.join(' ');
-    el.style.opacity = filters.opacity !== undefined ? filters.opacity : 1;
-    if (send && isConnected) socket.emit('filter', { id: el.dataset.id, filters, sender: socket.id });
-}
-
-// ----- Keyboard shortcuts -----
+// ---------------- KEYBOARD SHORTCUTS ----------------
 document.addEventListener('keydown', (e) => {
     const key = e.key.toLowerCase();
+    
+    // Media spawning shortcuts
     if (key === 'w') {
         spawnWebcam();
         return;
     }
-    if (key === 'v') return spawnVideo();
-    if (key === 'i') return spawnImage('archives/image1.jpg');
+    if (key === 'v') {
+        spawnVideo();
+        return;
+    }
+    if (key === 'i') {
+        spawnImage('archives/image1.jpg');
+        return;
+    }
     if (key === 'd') {
         const input = document.createElement('input');
         input.type = 'file';
@@ -500,6 +391,8 @@ document.addEventListener('keydown', (e) => {
         input.click();
         return;
     }
+    
+    // Delete selected element
     if (key === 'x' && hoveredElement) {
         const id = hoveredElement.dataset.id;
         hoveredElement.remove();
@@ -507,18 +400,24 @@ document.addEventListener('keydown', (e) => {
         hoveredElement = null;
         return;
     }
+    
     // Daily.co status check
     if (key === 's' && e.ctrlKey) {
         checkDailyCoStatus();
         return;
     }
+    
+    // Filter shortcuts (only if element is hovered)
     if (!hoveredElement) return;
+    
     const filters = JSON.parse(hoveredElement.dataset.filters || '{}');
+    
     if (key === 'g') filters.grayscale = filters.grayscale ? 0 : 100;
     if (key === 'b') filters.blur = filters.blur ? 0 : 5;
-    if (key === 'i') filters.invert = filters.invert ? 0 : 100;
+    if (key === 'j') filters.invert = filters.invert ? 0 : 100;
     if (key === 'c') filters.contrast = filters.contrast ? 0 : 150;
     if (key === 'l') filters.brightness = filters.brightness ? 0 : 150;
+    
     if (e.key === '[') {
         for (const k in filters) {
             if (filters[k] > 0 && k !== 'opacity') filters[k] = Math.max(0, filters[k] - 10);
@@ -529,6 +428,7 @@ document.addEventListener('keydown', (e) => {
             if (filters[k] > 0 && k !== 'opacity') filters[k] = Math.min(200, filters[k] + 10);
         }
     }
+    
     if (e.key === 'ArrowUp') {
         filters.opacity = parseFloat(filters.opacity) || 1;
         filters.opacity = Math.min(filters.opacity + 0.1, 1);
@@ -537,14 +437,14 @@ document.addEventListener('keydown', (e) => {
         filters.opacity = parseFloat(filters.opacity) || 1;
         filters.opacity = Math.max(filters.opacity - 0.1, 0);
     }
+    
     hoveredElement.dataset.filters = JSON.stringify(filters);
     updateFilters(hoveredElement);
 });
 
-// ---- Hovered element outline for easy targeting ----
-let hoveredElement = null;
+// ---------------- HOVER EFFECTS ----------------
 stage.addEventListener('mouseover', (e) => {
-    if (e.target.tagName === 'VIDEO' || e.target.tagName === 'IMG') {
+    if (e.target.tagName === 'VIDEO' || e.target.tagName === 'IMG' || e.target.dataset.id) {
         hoveredElement = e.target;
         e.target.style.outline = '2px solid red';
     }
@@ -557,27 +457,7 @@ stage.addEventListener('mouseout', (e) => {
     }
 });
 
-// Initialize Daily.co call when page loads
-document.addEventListener('DOMContentLoaded', async () => {
-    console.log('🚀 DOM Content Loaded - Initializing Daily.co...');
-    
-    try {
-        await initializeDailyCall();
-        console.log('✅ Daily.co initialized successfully');
-        
-        // Add Daily.co status to connection indicator
-        if (dailyCall) {
-            updateConnectionStatus('connected', 'Connected + Daily.co Ready');
-        }
-    } catch (error) {
-        console.error('❌ Failed to initialize Daily.co:', error);
-        updateConnectionStatus('disconnected', 'Daily.co Failed');
-    }
-    
-    initializeControlPanel();
-});
-
-// Add Daily.co status check function
+// ---------------- DAILY.CO STATUS CHECK ----------------
 function checkDailyCoStatus() {
     if (!dailyCall) {
         console.log('❌ Daily.co not initialized');
@@ -593,220 +473,22 @@ function checkDailyCoStatus() {
     return true;
 }
 
+// ---------------- INIT ----------------
+document.addEventListener('DOMContentLoaded', async () => {
+    console.log('🚀 Initializing Daily.co...');
+    try {
+        await initializeDailyCall();
+        updateConnectionStatus('connected', 'Connected + Daily Ready');
+        console.log('✅ Daily.co initialized successfully');
+    } catch (err) {
+        console.error('❌ Failed to initialize Daily.co:', err);
+        updateConnectionStatus('disconnected', 'Daily Failed');
+    }
+});
+
 // Handle page unload
 window.addEventListener('beforeunload', () => {
     if (dailyCall) {
         dailyCall.destroy();
     }
 });
-// Control Panel Functionality
-function initializeControlPanel() {
-    console.log('Initializing control panel...');
-    
-    // Wait a bit to ensure DOM is fully loaded
-    setTimeout(() => {
-        const controlBtn = document.getElementById('control-btn');
-        const controlPanel = document.getElementById('control-panel');
-        const closeBtn = document.getElementById('close-control-panel');
-        
-        console.log('Control button found:', controlBtn);
-        console.log('Control panel found:', controlPanel);
-        console.log('Close button found:', closeBtn);
-        
-        if (!controlBtn) {
-            console.error('Control button not found!');
-            return;
-        }
-        
-        if (!controlPanel) {
-            console.error('Control panel not found!');
-            return;
-        }
-        
-        if (!closeBtn) {
-            console.error('Close button not found!');
-            return;
-        }
-        
-        // Toggle control panel
-        controlBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            console.log('Control button clicked!');
-            const currentDisplay = controlPanel.style.display;
-            console.log('Current display:', currentDisplay);
-            controlPanel.style.display = currentDisplay === 'block' ? 'none' : 'block';
-            console.log('New display:', controlPanel.style.display);
-        });
-        
-        // Close control panel
-        closeBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            console.log('Close button clicked!');
-            controlPanel.style.display = 'none';
-        });
-        
-        // Close panel when clicking outside
-        window.addEventListener('click', (e) => {
-            if (e.target === controlPanel) {
-                controlPanel.style.display = 'none';
-            }
-        });
-        
-        // Test button functionality
-        console.log('Adding test click handler...');
-        controlBtn.onclick = function(e) {
-            e.preventDefault();
-            console.log('Test click handler triggered!');
-            controlPanel.style.display = controlPanel.style.display === 'block' ? 'none' : 'block';
-        };
-        
-        // Media Controls
-        const spawnWebcamBtn = document.getElementById('spawn-webcam-btn');
-        const spawnVideoBtn = document.getElementById('spawn-video-btn');
-        const spawnImageBtn = document.getElementById('spawn-image-btn');
-        const uploadMediaBtn = document.getElementById('upload-media-btn');
-        
-        if (spawnWebcamBtn) {
-            spawnWebcamBtn.addEventListener('click', () => {
-                spawnWebcam();
-                controlPanel.style.display = 'none';
-            });
-        }
-        
-        if (spawnVideoBtn) {
-            spawnVideoBtn.addEventListener('click', () => {
-                spawnVideo();
-                controlPanel.style.display = 'none';
-            });
-        }
-        
-        if (spawnImageBtn) {
-            spawnImageBtn.addEventListener('click', () => {
-                spawnImage('archives/image1.jpg');
-                controlPanel.style.display = 'none';
-            });
-        }
-        
-        if (uploadMediaBtn) {
-            uploadMediaBtn.addEventListener('click', () => {
-                const input = document.createElement('input');
-                input.type = 'file';
-                input.accept = 'video/*,image/*';
-                input.multiple = true;
-                input.onchange = ev => { 
-                    for (const file of ev.target.files) handleFile(file); 
-                };
-                input.click();
-                controlPanel.style.display = 'none';
-            });
-        }
-        
-        // Quick Actions
-        const deleteSelectedBtn = document.getElementById('delete-selected-btn');
-        const bringToFrontBtn = document.getElementById('bring-to-front-btn');
-        const sendToBackBtn = document.getElementById('send-to-back-btn');
-        
-        if (deleteSelectedBtn) {
-            deleteSelectedBtn.addEventListener('click', () => {
-                if (hoveredElement) {
-                    const id = hoveredElement.dataset.id;
-                    hoveredElement.remove();
-                    socket.emit('delete', { id });
-                    hoveredElement = null;
-                }
-                controlPanel.style.display = 'none';
-            });
-        }
-        
-        if (bringToFrontBtn) {
-            bringToFrontBtn.addEventListener('click', () => {
-                if (hoveredElement) {
-                    bringToFront(hoveredElement);
-                }
-                controlPanel.style.display = 'none';
-            });
-        }
-        
-        if (sendToBackBtn) {
-            sendToBackBtn.addEventListener('click', () => {
-                if (hoveredElement) {
-                    hoveredElement.style.zIndex = '0';
-                }
-                controlPanel.style.display = 'none';
-            });
-        }
-        
-        // Daily.co Controls
-        const joinCallBtn = document.getElementById('join-call-btn');
-        const leaveCallBtn = document.getElementById('leave-call-btn');
-        const toggleMicBtn = document.getElementById('toggle-mic-btn');
-        const toggleCameraBtn = document.getElementById('toggle-camera-btn');
-        
-        if (joinCallBtn) {
-            joinCallBtn.addEventListener('click', async () => {
-                if (!dailyCall) {
-                    await initializeDailyCall();
-                }
-                controlPanel.style.display = 'none';
-            });
-        }
-        
-        if (leaveCallBtn) {
-            leaveCallBtn.addEventListener('click', () => {
-                if (dailyCall) {
-                    dailyCall.destroy();
-                    dailyCall = null;
-                }
-                controlPanel.style.display = 'none';
-            });
-        }
-        
-        if (toggleMicBtn) {
-            toggleMicBtn.addEventListener('click', () => {
-                if (dailyCall) {
-                    dailyCall.setLocalAudio(!dailyCall.localAudio());
-                }
-                controlPanel.style.display = 'none';
-            });
-        }
-        
-        if (toggleCameraBtn) {
-            toggleCameraBtn.addEventListener('click', () => {
-                if (dailyCall) {
-                    dailyCall.setLocalVideo(!dailyCall.localVideo());
-                }
-                controlPanel.style.display = 'none';
-            });
-        }
-        
-        // Filter Controls
-        const filterSliders = [
-            { id: 'grayscale-slider', filter: 'grayscale' },
-            { id: 'blur-slider', filter: 'blur' },
-            { id: 'brightness-slider', filter: 'brightness' },
-            { id: 'contrast-slider', filter: 'contrast' },
-            { id: 'invert-slider', filter: 'invert' },
-            { id: 'opacity-slider', filter: 'opacity' }
-        ];
-        
-        filterSliders.forEach(({ id, filter }) => {
-            const slider = document.getElementById(id);
-            if (slider) {
-                slider.addEventListener('input', (e) => {
-                    if (hoveredElement) {
-                        const filters = JSON.parse(hoveredElement.dataset.filters || '{}');
-                        const value = filter === 'opacity' ? e.target.value / 100 : e.target.value;
-                        filters[filter] = value;
-                        hoveredElement.dataset.filters = JSON.stringify(filters);
-                        updateFilters(hoveredElement);
-                    }
-                });
-            }
-        });
-        
-        console.log('Control panel initialization complete!');
-    }, 100);
-}
-
