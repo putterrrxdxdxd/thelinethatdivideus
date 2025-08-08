@@ -20,11 +20,12 @@ const PORT = process.env.PORT || 3000;
 app.use((req, res, next) => {
     res.setHeader("Content-Security-Policy",
         "default-src 'self'; " +
-        "script-src 'self' 'unsafe-inline' https://unpkg.com; " +
+        "script-src 'self' 'unsafe-eval' https://unpkg.com https://*.daily.co; " +
         "style-src 'self' 'unsafe-inline'; " +
         "img-src 'self' data:; " +
         "media-src 'self' data: blob:; " + // for local video blob URLs
-        "connect-src 'self' ws: wss: https://*.daily.co;"
+        "connect-src 'self' ws: wss: https://*.daily.co; " +
+        "frame-src https://*.daily.co;"
     );
     next();
 });
