@@ -83,6 +83,7 @@ async function initializeDailyCall() {
     
     console.log('🔗 Connecting to Daily.co room:', roomUrl);
     
+    // Create Daily.co call object
     dailyCall = window.DailyIframe.createFrame(document.createElement('div'), {
         iframeStyle: {
             width: '100%',
@@ -93,16 +94,18 @@ async function initializeDailyCall() {
         showLeaveButton: true,
     });
 
+    // Set up event listeners
     dailyCall.on('joined-meeting', () => {
         console.log('✅ Joined Daily.co meeting');
-        // Automatically spawn local webcam when joining
-        spawnWebcam();
+        // Don't auto-spawn webcam here - let Daily.co handle participants
     });
 
     dailyCall.on('participant-joined', (event) => {
         console.log('👤 Participant joined:', event.participant);
         participants.set(event.participant.session_id, event.participant);
-        spawnRemoteParticipant(event.participant);
+        
+        // Spawn webcam for all participants (including local)
+        spawnWebcam();
     });
 
     dailyCall.on('participant-updated', (event) => {
@@ -135,6 +138,14 @@ async function initializeDailyCall() {
     try {
         await dailyCall.join({ url: roomUrl });
         console.log('✅ Successfully joined Daily.co room');
+        
+        // Get local participant info
+        const localParticipant = dailyCall.participants().local;
+        if (localParticipant) {
+            console.log('👤 Local participant:', localParticipant);
+            participants.set(localParticipant.session_id, localParticipant);
+        }
+        
         return dailyCall;
     } catch (error) {
         console.error('❌ Failed to join Daily.co call:', error);
@@ -149,87 +160,61 @@ function spawnRemoteParticipant(participant) {
     
     console.log('👤 Spawning remote participant:', participant.session_id);
     
-    const containerId = `daily-participant-${participant.session_id}`;
-    if (document.querySelector(`[data-id="${containerId}"]`)) {
-        console.log('👤 Participant container already exists:', containerId);
+    const participantId = `daily-webcam-${participant.session_id}`;
+    if (document.querySelector(`[data-id="${participantId}"]`)) {
+        console.log('👤 Participant webcam already exists:', participantId);
         return;
     }
 
+    const webcam = document.createElement('video');
+    webcam.dataset.id = participantId;
+    webcam.dataset.participant = participant.session_id;
+    webcam.dataset.local = false;
+    webcam.autoplay = true;
+    webcam.playsInline = true;
+    webcam.muted = true;
+    webcam.style.position = 'absolute';
+    webcam.style.top = `${200 + Math.floor(Math.random() * 200)}px`;
+    webcam.style.left = `${200 + Math.floor(Math.random() * 200)}px`;
+    webcam.width = 320;
+    webcam.height = 240;
+    webcam.style.objectFit = 'cover';
+    webcam.style.borderRadius = '8px';
+    webcam.style.border = '2px solid #007bff';
+
+    // Add participant name label
+    const nameLabel = document.createElement('div');
+    nameLabel.textContent = participant.user_name || 'Remote Participant';
+    nameLabel.style.position = 'absolute';
+    nameLabel.style.top = '-20px';
+    nameLabel.style.left = '0';
+    nameLabel.style.background = 'rgba(0,0,0,0.7)';
+    nameLabel.style.color = 'white';
+    nameLabel.style.padding = '2px 6px';
+    nameLabel.style.fontSize = '10px';
+    nameLabel.style.borderRadius = '3px';
+
     const container = document.createElement('div');
-    container.dataset.id = containerId;
-    container.dataset.participant = participant.session_id;
-    container.style.position = 'absolute';
-    container.style.top = `${200 + Math.floor(Math.random() * 200)}px`;
-    container.style.left = `${200 + Math.floor(Math.random() * 200)}px`;
-    container.style.width = '320px';
-    container.style.height = '260px';
-    container.style.backgroundColor = '#000';
-    container.style.borderRadius = '8px';
-    container.style.overflow = 'hidden';
-    container.style.border = '2px solid #007bff';
+    container.style.position = 'relative';
+    container.appendChild(webcam);
+    container.appendChild(nameLabel);
 
     stage.appendChild(container);
     makeInteractive(container);
 
-    const video = document.createElement('video');
-    video.dataset.id = `video-${participant.session_id}`;
-    video.autoplay = true;
-    video.playsInline = true;
-    video.muted = true;
-    video.width = 320;
-    video.height = 240;
-    video.style.display = 'block';
-    video.style.width = '100%';
-    video.style.height = '100%';
-    video.style.objectFit = 'cover';
-
-    const controls = document.createElement('div');
-    controls.style.position = 'absolute';
-    controls.style.bottom = '0';
-    controls.style.left = '0';
-    controls.style.right = '0';
-    controls.style.background = 'rgba(0,0,0,0.7)';
-    controls.style.padding = '4px';
-    controls.style.display = 'flex';
-    controls.style.gap = '4px';
-
-    const muteBtn = document.createElement('button');
-    muteBtn.textContent = 'Mute';
-    muteBtn.style.flex = '1';
-    muteBtn.style.padding = '2px';
-    muteBtn.style.fontSize = '10px';
-    muteBtn.style.cursor = 'pointer';
-    muteBtn.addEventListener('click', () => {
-        video.muted = !video.muted;
-        muteBtn.textContent = video.muted ? 'Unmute' : 'Mute';
-    });
-
-    const nameLabel = document.createElement('span');
-    nameLabel.textContent = participant.user_name || 'Anonymous';
-    nameLabel.style.color = 'white';
-    nameLabel.style.fontSize = '10px';
-    nameLabel.style.flex = '2';
-    nameLabel.style.textAlign = 'center';
-    nameLabel.style.lineHeight = '16px';
-
-    controls.appendChild(nameLabel);
-    controls.appendChild(muteBtn);
-    container.appendChild(video);
-    container.appendChild(controls);
-
-    // Set video source from Daily.co
+    // Set video source from Daily.co participant
     if (participant.video) {
-        video.srcObject = participant.video;
-        console.log('✅ Remote participant video stream attached');
+        webcam.srcObject = participant.video;
+        console.log('✅ Remote participant video stream attached:', participant.session_id);
     } else {
-        console.log('⚠️ No video stream available for participant');
+        console.log('⚠️ No video stream available for participant:', participant.session_id);
     }
 }
 
 // Update remote participant video
 function updateRemoteParticipant(participant) {
-    const containerId = `daily-participant-${participant.session_id}`;
-    const container = document.querySelector(`[data-id="${containerId}"]`);
+    const participantId = `daily-webcam-${participant.session_id}`;
+    const container = document.querySelector(`[data-id="${participantId}"]`);
     if (!container) {
         console.log('⚠️ Container not found for participant update:', participant.session_id);
         return;
@@ -241,18 +226,21 @@ function updateRemoteParticipant(participant) {
         console.log('🔄 Updated video stream for participant:', participant.session_id);
     }
 
-    const nameLabel = container.querySelector('span');
+    const nameLabel = container.querySelector('div');
     if (nameLabel) {
-        nameLabel.textContent = participant.user_name || 'Anonymous';
+        nameLabel.textContent = participant.user_name || 'Remote Participant';
     }
 }
 
 // Remove remote participant video
 function removeRemoteParticipant(sessionId) {
-    const containerId = `daily-participant-${sessionId}`;
-    const container = document.querySelector(`[data-id="${containerId}"]`);
+    const participantId = `daily-webcam-${sessionId}`;
+    const container = document.querySelector(`[data-id="${participantId}"]`);
     if (container) {
+        console.log('🗑️ Removing participant webcam:', sessionId);
         container.remove();
+    } else {
+        console.log('⚠️ Participant webcam not found for removal:', sessionId);
     }
 }
 
@@ -296,52 +284,77 @@ function makeInteractive(el) {
         });
 }
 
-// ---------- SPAWN WEBCAM: unlimited clones
+// ---------- SPAWN WEBCAM: using Daily.co participants
 function spawnWebcam(id = null, peerId = socket.id) {
-    id = id || `webcam-${socket.id}-${Date.now()}`; // Unique per webcam box!
-    
-    // Check if webcam already exists
-    if (document.querySelector(`[data-id="${id}"]`)) {
-        console.log('📹 Webcam already exists:', id);
+    if (!dailyCall) {
+        console.log('❌ Daily.co not initialized - cannot spawn webcam');
         return;
     }
     
-    const webcam = document.createElement('video');
-    webcam.dataset.id = id;
-    webcam.dataset.peer = peerId;
-    webcam.autoplay = true;
-    webcam.playsInline = true;
-    webcam.muted = peerId === socket.id; // Only mute self
-    webcam.style.position = 'absolute';
-    webcam.style.top = '100px';
-    webcam.style.left = '100px';
-    webcam.width = 320;
-    webcam.height = 240;
-    webcam.style.objectFit = 'cover';
-    webcam.style.borderRadius = '8px';
-    webcam.style.border = '2px solid #333';
+    // Get all participants (including local)
+    const allParticipants = dailyCall.participants();
+    console.log('📊 All participants:', allParticipants);
     
-    stage.appendChild(webcam);
-    makeInteractive(webcam);
-
-    if (peerId === socket.id) {
-        // Local webcam - get stream from Daily.co or local media
-        if (dailyCall && dailyCall.localVideo()) {
-            console.log('📹 Using Daily.co local video stream');
-            // Daily.co handles the stream automatically
-        } else {
-            console.log('📹 Using local media stream');
-            getWebcamStream().then(s => { 
-                if (s) {
-                    webcam.srcObject = s;
-                    console.log('✅ Local webcam stream attached');
-                }
-            });
+    // Spawn webcam for each participant
+    Object.values(allParticipants).forEach(participant => {
+        const participantId = `daily-webcam-${participant.session_id}`;
+        
+        // Check if webcam already exists for this participant
+        if (document.querySelector(`[data-id="${participantId}"]`)) {
+            console.log('📹 Webcam already exists for participant:', participant.session_id);
+            return;
         }
-    }
-
-    if (!id.includes('-from-server') && isConnected) {
-        socket.emit('spawn', { type: 'webcam', id, peerId });
+        
+        console.log('📹 Spawning webcam for participant:', participant.session_id, participant.local ? '(local)' : '(remote)');
+        
+        const webcam = document.createElement('video');
+        webcam.dataset.id = participantId;
+        webcam.dataset.participant = participant.session_id;
+        webcam.dataset.local = participant.local;
+        webcam.autoplay = true;
+        webcam.playsInline = true;
+        webcam.muted = participant.local; // Mute local participant
+        webcam.style.position = 'absolute';
+        webcam.style.top = `${100 + Math.floor(Math.random() * 200)}px`;
+        webcam.style.left = `${100 + Math.floor(Math.random() * 200)}px`;
+        webcam.width = 320;
+        webcam.height = 240;
+        webcam.style.objectFit = 'cover';
+        webcam.style.borderRadius = '8px';
+        webcam.style.border = participant.local ? '2px solid #28a745' : '2px solid #007bff';
+        
+        // Add participant name label
+        const nameLabel = document.createElement('div');
+        nameLabel.textContent = participant.user_name || (participant.local ? 'You' : 'Participant');
+        nameLabel.style.position = 'absolute';
+        nameLabel.style.top = '-20px';
+        nameLabel.style.left = '0';
+        nameLabel.style.background = 'rgba(0,0,0,0.7)';
+        nameLabel.style.color = 'white';
+        nameLabel.style.padding = '2px 6px';
+        nameLabel.style.fontSize = '10px';
+        nameLabel.style.borderRadius = '3px';
+        
+        const container = document.createElement('div');
+        container.style.position = 'relative';
+        container.appendChild(webcam);
+        container.appendChild(nameLabel);
+        
+        stage.appendChild(container);
+        makeInteractive(container);
+        
+        // Set video source from Daily.co participant
+        if (participant.video) {
+            webcam.srcObject = participant.video;
+            console.log('✅ Video stream attached for participant:', participant.session_id);
+        } else {
+            console.log('⚠️ No video stream available for participant:', participant.session_id);
+        }
+    });
+    
+    // Broadcast spawn to other users via Socket.IO
+    if (isConnected) {
+        socket.emit('spawn', { type: 'webcam', id: 'daily-webcam', peerId });
         console.log('📤 Broadcasted webcam spawn to other users');
     }
 }
