@@ -1,10 +1,11 @@
 {
   "name": "thelinethatdivideus",
-  "version": "1.0.1",
-  "description": "Collaborative archive editing app",
+  "version": "1.0.0",
+  "description": "Interactive stage with real-time collaboration",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "nodemon server.js"
   },
   "engines": {
     "node": ">=18"
@@ -12,7 +13,10 @@
   "dependencies": {
     "express": "^5.1.0",
     "interactjs": "^1.10.27",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "@daily-co/daily-js": "^0.60.0",
+    "mongodb": "^6.3.0",
+    "dotenv": "^16.3.1"
   },
   "author": "",
   "license": "ISC"

@@ -10,8 +10,16 @@
     <div id="stage">
         <div id="drop-zone">Drop file here</div>
     </div>
+    
+    <!-- Connection Status Indicator -->
+    <div id="connection-status" class="connection-status">
+        <span id="status-text">Connecting...</span>
+    </div>
+    
     <script src="/vendor/interact.min.js" defer></script>
     <script src="/socket.io/socket.io.js" defer></script>
+    <script src="https://unpkg.com/@daily-co/daily-js" defer></script>
+    <script src="config.js" defer></script>
     <script src="client.js" defer></script>
 </body>
 </html>
