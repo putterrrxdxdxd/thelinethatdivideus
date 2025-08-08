@@ -75,10 +75,20 @@ async function initializeDailyCall() {
         iframeStyle: { width: '100%', height: '100%', border: '0' }
     });
 
-    // Always try to append the iframe after DOM is loaded
+    // Extra debug: log iframe, force visible, log src
     const dailyContainer = document.getElementById('daily-container');
-    if (dailyContainer && !dailyCall.iframe().parentElement) {
-        dailyContainer.appendChild(dailyCall.iframe());
+    const iframe = dailyCall.iframe();
+    if (iframe) {
+        iframe.style.display = 'block';
+        iframe.style.width = '100%';
+        iframe.style.height = '100%';
+        iframe.style.background = '#000';
+        console.log('🖼️ Daily.co iframe src:', iframe.src);
+    } else {
+        console.error('❌ Daily.co iframe not created!');
+    }
+    if (dailyContainer && !iframe.parentElement) {
+        dailyContainer.appendChild(iframe);
         console.log('✅ Daily.co iframe appended to #daily-container');
     } else if (!dailyContainer) {
         console.error('❌ #daily-container not found in DOM!');
