@@ -75,13 +75,15 @@ async function initializeDailyCall() {
         iframeStyle: { width: '100%', height: '100%', border: '0' }
     });
 
-    // Append the Daily.co iframe to the hidden container so camera/mic access works
+    // Always try to append the iframe after DOM is loaded
     const dailyContainer = document.getElementById('daily-container');
     if (dailyContainer && !dailyCall.iframe().parentElement) {
         dailyContainer.appendChild(dailyCall.iframe());
         console.log('✅ Daily.co iframe appended to #daily-container');
+    } else if (!dailyContainer) {
+        console.error('❌ #daily-container not found in DOM!');
     } else {
-        console.warn('⚠️ Daily.co iframe NOT appended (container missing or already present)');
+        console.warn('⚠️ Daily.co iframe already present');
     }
 
     dailyCall.on('joined-meeting', () => {
@@ -556,7 +558,7 @@ function debugElements() {
 
 // ---------------- INIT ----------------
 document.addEventListener('DOMContentLoaded', async () => {
-    console.log('🚀 Initializing Daily.co...');
+    console.log('🚀 DOM fully loaded');
     try {
         await initializeDailyCall();
         updateConnectionStatus('connected', 'Connected + Daily Ready');
