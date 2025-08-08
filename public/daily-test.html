@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Daily.co Test</title>
+  <script src="https://unpkg.com/@daily-co/daily-js"></script>
+</head>
+<body>
+  <div id="daily-container" style="width:400px;height:300px;background:#222"></div>
+  <script>
+    const call = window.DailyIframe.createFrame(document.getElementById('daily-container'));
+    call.join({ url: 'https://testtheline.daily.co/thelinemonolith' });
+  </script>
+</body>
+</html>

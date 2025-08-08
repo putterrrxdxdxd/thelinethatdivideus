@@ -20,7 +20,7 @@ const PORT = process.env.PORT || 3000;
 app.use((req, res, next) => {
     res.setHeader("Content-Security-Policy",
         "default-src 'self'; " +
-        "script-src 'self' 'unsafe-eval' https://unpkg.com https://*.daily.co; " +
+        "script-src 'self' 'unsafe-eval' 'unsafe-inline' blob: https://unpkg.com https://*.daily.co; " +
         "style-src 'self' 'unsafe-inline'; " +
         "img-src 'self' data:; " +
         "media-src 'self' data: blob:; " + // for local video blob URLs

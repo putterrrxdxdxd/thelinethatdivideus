@@ -5,11 +5,10 @@ const socket = io({
     timeout: 20000
 });
 
-let dailyCall = null;
 let highestZ = 1;
-let participants = new Map();
 let isConnected = false;
 let hoveredElement = null;
+let localStream = null;
 
 const stage = document.getElementById('stage');
 const dropZone = document.getElementById('drop-zone');
@@ -59,128 +58,25 @@ socket.on('reconnect_failed', () => {
     alert('Connection lost. Please refresh the page.');
 });
 
-// ---------------- DAILY.CO INIT ----------------
-async function initializeDailyCall() {
-    if (dailyCall) return dailyCall;
-
-    const roomUrl = window.DAILY_CONFIG?.roomUrl;
-    if (!roomUrl) {
-        alert("❌ No Daily.co room URL configured");
+// ---------------- SIMPLE LOCAL WEBCAM SPAWN ----------------
+async function spawnWebcam(id = null) {
+    id = id || `webcam-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    if (document.querySelector(`[data-id="${id}"]`)) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert('Webcam not supported');
         return;
     }
-
-    console.log('🔗 Connecting to Daily.co room:', roomUrl);
-
-    dailyCall = window.DailyIframe.createFrame(document.createElement('div'), {
-        iframeStyle: { width: '100%', height: '100%', border: '0' }
-    });
-
-    // Extra debug: log iframe, force visible, log src
-    const dailyContainer = document.getElementById('daily-container');
-    const iframe = dailyCall.iframe();
-    if (iframe) {
-        iframe.style.display = 'block';
-        iframe.style.width = '100%';
-        iframe.style.height = '100%';
-        iframe.style.background = '#000';
-        console.log('🖼️ Daily.co iframe src:', iframe.src);
-    } else {
-        console.error('❌ Daily.co iframe not created!');
-    }
-    if (dailyContainer && !iframe.parentElement) {
-        dailyContainer.appendChild(iframe);
-        console.log('✅ Daily.co iframe appended to #daily-container');
-    } else if (!dailyContainer) {
-        console.error('❌ #daily-container not found in DOM!');
-    } else {
-        console.warn('⚠️ Daily.co iframe already present');
-    }
-
-    dailyCall.on('joined-meeting', () => {
-        console.log('✅ Joined Daily.co meeting');
-    });
-
-    dailyCall.on('participant-joined', (event) => {
-        console.log('👤 Participant joined:', event.participant);
-        participants.set(event.participant.session_id, event.participant);
-        spawnWebcam();
-    });
-
-    dailyCall.on('track-started', (event) => {
-        console.log('🎥 Track started:', event.participant);
-        spawnWebcam();
-    });
-
-    dailyCall.on('participant-updated', (event) => {
-        console.log('🔄 Participant updated:', event.participant);
-        participants.set(event.participant.session_id, event.participant);
-    });
-
-    dailyCall.on('participant-left', (event) => {
-        console.log('👋 Participant left:', event.participant);
-        participants.delete(event.participant.session_id);
-        removeElement(`daily-webcam-${event.participant.session_id}`);
-    });
-
-    dailyCall.on('camera-error', (event) => {
-        console.error('📹 Camera error:', event);
-        alert('Camera error: ' + event.errorMsg);
-    });
-
-    dailyCall.on('mic-error', (event) => {
-        console.error('🎤 Microphone error:', event);
-        alert('Microphone error: ' + event.errorMsg);
-    });
-
-    dailyCall.on('error', (event) => {
-        console.error('❌ Daily.co error:', event);
-        alert('Daily.co error: ' + event.errorMsg);
-    });
-
     try {
-        console.log('🚀 Attempting to join Daily.co room...');
-        await dailyCall.join({ url: roomUrl });
-        console.log('✅ Successfully joined Daily.co room');
-    } catch (err) {
-        console.error('❌ Failed to join Daily.co room:', err);
-    }
-
-    const localParticipant = dailyCall.participants().local;
-    if (localParticipant) {
-        console.log('👤 Local participant:', localParticipant);
-        participants.set(localParticipant.session_id, localParticipant);
-    } else {
-        console.warn('⚠️ No local participant found after join');
-    }
-    return dailyCall;
-}
-
-// ---------------- SPAWN WEBCAM ----------------
-function spawnWebcam() {
-    if (!dailyCall) {
-        console.log('❌ Daily.co not initialized - cannot spawn webcam');
-        return;
-    }
-
-    const allParticipants = dailyCall.participants();
-    console.log('📊 All participants:', allParticipants);
-
-    Object.values(allParticipants).forEach(participant => {
-        const participantId = `daily-webcam-${participant.session_id}`;
-        if (document.querySelector(`[data-id="${participantId}"]`)) {
-            console.log('📹 Webcam already exists for participant:', participant.session_id);
-            return;
+        if (!localStream) {
+            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
         }
-
-        console.log('📹 Spawning webcam for participant:', participant.session_id, participant.local ? '(local)' : '(remote)');
-
-        // Create video element
         const video = document.createElement('video');
-        video.dataset.id = participantId;
+        video.dataset.id = id;
         video.dataset.filters = '{}';
         video.autoplay = true;
         video.playsInline = true;
-        video.muted = participant.local; // Mute local to avoid echo
+        video.muted = true;
+        video.srcObject = localStream;
         video.style.position = 'absolute';
         video.style.top = `${100 + Math.floor(Math.random() * 200)}px`;
         video.style.left = `${100 + Math.floor(Math.random() * 200)}px`;
@@ -188,57 +84,12 @@ function spawnWebcam() {
         video.height = 240;
         video.style.objectFit = 'cover';
         video.style.borderRadius = '8px';
-        video.style.border = participant.local ? '2px solid #28a745' : '2px solid #007bff';
+        video.style.border = '2px solid #28a745';
         video.style.backgroundColor = '#000';
-
-        // Create name label
-        const nameLabel = document.createElement('div');
-        nameLabel.textContent = participant.user_name || (participant.local ? 'You' : 'Participant');
-        nameLabel.style.position = 'absolute';
-        nameLabel.style.top = '-20px';
-        nameLabel.style.left = '0';
-        nameLabel.style.background = 'rgba(0,0,0,0.7)';
-        nameLabel.style.color = 'white';
-        nameLabel.style.padding = '2px 6px';
-        nameLabel.style.fontSize = '10px';
-        nameLabel.style.borderRadius = '3px';
-        nameLabel.style.zIndex = '10';
-
-        // Create container
-        const container = document.createElement('div');
-        container.style.position = 'relative';
-        container.appendChild(video);
-        container.appendChild(nameLabel);
-
-        stage.appendChild(container);
-        makeInteractive(container);
-
-        // Attach Daily.co tracks using the video element
-        try {
-            dailyCall.attachParticipantTracks(
-                participant.session_id,
-                video,
-                { video: true, audio: !participant.local }
-            );
-            console.log('✅ Video tracks attached for participant:', participant.session_id);
-        } catch (error) {
-            console.error('❌ Failed to attach tracks for participant:', participant.session_id, error);
-            
-            // Fallback: try to get tracks manually
-            try {
-                if (participant.video) {
-                    video.srcObject = participant.video;
-                    console.log('✅ Fallback: Manual video stream attached for participant:', participant.session_id);
-                }
-            } catch (fallbackError) {
-                console.error('❌ Fallback failed for participant:', participant.session_id, fallbackError);
-            }
-        }
-    });
-
-    if (isConnected) {
-        socket.emit('spawn', { type: 'webcam', id: 'daily-webcam', peerId: socket.id });
-        console.log('📤 Broadcasted webcam spawn to other users');
+        stage.appendChild(video);
+        makeInteractive(video);
+    } catch (err) {
+        alert('Could not access webcam: ' + err.message);
     }
 }
 
@@ -246,7 +97,6 @@ function spawnWebcam() {
 function spawnVideo(src = 'archives/video1.mp4', id = null) {
     id = id || `video-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     if (document.querySelector(`[data-id="${id}"]`)) return;
-
     const video = document.createElement('video');
     video.dataset.id = id;
     video.dataset.filters = '{}';
@@ -263,16 +113,12 @@ function spawnVideo(src = 'archives/video1.mp4', id = null) {
     video.style.borderRadius = '8px';
     stage.appendChild(video);
     makeInteractive(video);
-
-    if (!id.includes('-from-server') && isConnected) {
-        socket.emit('spawn', { type: 'video', src, id });
-    }
+    if (isConnected) socket.emit('spawn', { type: 'video', src, id });
 }
 
 function spawnImage(src, id = null) {
     id = id || `image-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     if (document.querySelector(`[data-id="${id}"]`)) return;
-
     const img = document.createElement('img');
     img.dataset.id = id;
     img.dataset.filters = '{}';
@@ -285,18 +131,13 @@ function spawnImage(src, id = null) {
     img.style.borderRadius = '8px';
     stage.appendChild(img);
     makeInteractive(img);
-
-    if (!id.includes('-from-server') && isConnected) {
-        socket.emit('spawn', { type: 'image', src, id });
-    }
+    if (isConnected) socket.emit('spawn', { type: 'image', src, id });
 }
 
 // ---------------- SOCKET EVENTS ----------------
 socket.on('spawn', (data) => {
-    console.log('📥 Received spawn event:', data);
-    if (data.type === 'webcam') spawnWebcam();
-    if (data.type === 'video') spawnVideo(data.src, data.id + '-from-server');
-    if (data.type === 'image') spawnImage(data.src, data.id + '-from-server');
+    if (data.type === 'video') spawnVideo(data.src, data.id);
+    if (data.type === 'image') spawnImage(data.src, data.id);
 });
 
 socket.on('move', ({ id, x, y }) => {
@@ -329,10 +170,7 @@ socket.on('delete', ({ id }) => removeElement(id));
 
 function removeElement(id) {
     const el = document.querySelector(`[data-id="${id}"]`);
-    if (el) {
-        console.log('🗑️ Removing element:', id);
-        el.remove();
-    }
+    if (el) el.remove();
 }
 
 // ---------------- INTERACT.JS ----------------
@@ -355,7 +193,7 @@ function makeInteractive(el) {
                     t.dataset.x = x;
                     t.dataset.y = y;
                     if (isConnected) {
-                    socket.emit('move', { id: t.dataset.id, x, y });
+                        socket.emit('move', { id: t.dataset.id, x, y });
                     }
                 }
             }
@@ -368,7 +206,7 @@ function makeInteractive(el) {
                     t.style.width = `${e.rect.width}px`;
                     t.style.height = `${e.rect.height}px`;
                     if (isConnected) {
-                    socket.emit('resize', { id: t.dataset.id, width: e.rect.width, height: e.rect.height });
+                        socket.emit('resize', { id: t.dataset.id, width: e.rect.width, height: e.rect.height });
                     }
                 }
             }
@@ -418,34 +256,14 @@ window.addEventListener('drop', (e) => {
 });
 
 // ---------------- KEYBOARD SHORTCUTS ----------------
-function debugDailyParticipants() {
-    if (!dailyCall) {
-        console.log('❌ Daily.co not initialized');
-        return;
-    }
-    const parts = dailyCall.participants();
-    console.log('🔍 Daily.co participants:', parts);
-    Object.values(parts).forEach(p => {
-        console.log(`- ${p.session_id} (${p.local ? 'local' : 'remote'}): video=${p.video}, audio=${p.audio}`);
-    });
-}
-
 document.addEventListener('keydown', (e) => {
     const key = e.key.toLowerCase();
-    
-    // Media spawning shortcuts
     if (key === 'w') {
         spawnWebcam();
         return;
     }
-    if (key === 'v') {
-        spawnVideo();
-        return;
-    }
-    if (key === 'i') {
-        spawnImage('archives/image1.jpg');
-        return;
-    }
+    if (key === 'v') return spawnVideo();
+    if (key === 'i') return spawnImage('archives/image1.jpg');
     if (key === 'd') {
         const input = document.createElement('input');
         input.type = 'file';
@@ -455,8 +273,6 @@ document.addEventListener('keydown', (e) => {
         input.click();
         return;
     }
-    
-    // Delete selected element (video, webcam, or image)
     if (key === 'x' && hoveredElement) {
         const id = hoveredElement.dataset.id;
         hoveredElement.remove();
@@ -464,36 +280,13 @@ document.addEventListener('keydown', (e) => {
         hoveredElement = null;
         return;
     }
-    
-    // Daily.co status check
-    if (key === 's' && e.ctrlKey) {
-        checkDailyCoStatus();
-        return;
-    }
-    
-    // Debug elements
-    if (key === 'e' && e.ctrlKey) {
-        debugElements();
-        return;
-    }
-
-    // Debug Daily.co participants
-    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'd') {
-        debugDailyParticipants();
-        return;
-    }
-    
-    // Filter shortcuts (only if element is hovered)
     if (!hoveredElement) return;
-    
     const filters = JSON.parse(hoveredElement.dataset.filters || '{}');
-    
     if (key === 'g') filters.grayscale = filters.grayscale ? 0 : 100;
     if (key === 'b') filters.blur = filters.blur ? 0 : 5;
     if (key === 'j') filters.invert = filters.invert ? 0 : 100;
     if (key === 'c') filters.contrast = filters.contrast ? 0 : 150;
     if (key === 'l') filters.brightness = filters.brightness ? 0 : 150;
-    
     if (e.key === '[') {
         for (const k in filters) {
             if (filters[k] > 0 && k !== 'opacity') filters[k] = Math.max(0, filters[k] - 10);
@@ -504,7 +297,6 @@ document.addEventListener('keydown', (e) => {
             if (filters[k] > 0 && k !== 'opacity') filters[k] = Math.min(200, filters[k] + 10);
         }
     }
-    
     if (e.key === 'ArrowUp') {
         filters.opacity = parseFloat(filters.opacity) || 1;
         filters.opacity = Math.min(filters.opacity + 0.1, 1);
@@ -513,25 +305,21 @@ document.addEventListener('keydown', (e) => {
         filters.opacity = parseFloat(filters.opacity) || 1;
         filters.opacity = Math.max(filters.opacity - 0.1, 0);
     }
-    
     hoveredElement.dataset.filters = JSON.stringify(filters);
     updateFilters(hoveredElement);
 });
 
 // ---------------- HOVER EFFECTS ----------------
 stage.addEventListener('mouseover', (e) => {
-    // Find the element with data-id (could be the target or its parent container)
     let targetElement = e.target;
     if (!targetElement.dataset.id && targetElement.parentElement && targetElement.parentElement.querySelector('[data-id]')) {
         targetElement = targetElement.parentElement.querySelector('[data-id]');
     }
-    
     if (targetElement.tagName === 'VIDEO' || targetElement.tagName === 'IMG' || targetElement.dataset.id) {
         hoveredElement = targetElement;
         targetElement.style.outline = '2px solid red';
     }
 });
-
 stage.addEventListener('mouseout', (e) => {
     if (hoveredElement && (e.target === hoveredElement || e.target.parentElement?.querySelector('[data-id]') === hoveredElement)) {
         hoveredElement.style.outline = 'none';
@@ -539,49 +327,60 @@ stage.addEventListener('mouseout', (e) => {
     }
 });
 
-// ---------------- DAILY.CO STATUS CHECK ----------------
-function checkDailyCoStatus() {
-    if (!dailyCall) {
-        console.log('❌ Daily.co not initialized');
-        return false;
-    }
-    
-    console.log('📊 Daily.co Status:');
-    console.log('- Local Audio:', dailyCall.localAudio());
-    console.log('- Local Video:', dailyCall.localVideo());
-    console.log('- Participants:', participants.size);
-    console.log('- Room URL:', window.DAILY_CONFIG?.roomUrl);
-    
-    return true;
-}
+// Minimal Daily.co integration
+let dailyCall = null;
+let dailyParticipants = {};
 
-// ---------------- DEBUG FUNCTIONS ----------------
-function debugElements() {
-    const allElements = document.querySelectorAll('[data-id]');
-    console.log('🔍 All elements on stage:', allElements.length);
-    allElements.forEach(el => {
-        console.log(`- ${el.dataset.id}: ${el.tagName} at (${el.style.left}, ${el.style.top})`);
-        console.log(`  Visible: ${el.offsetWidth > 0 && el.offsetHeight > 0}`);
-        console.log(`  Style: width=${el.style.width}, height=${el.style.height}`);
+function setupDaily() {
+    if (!window.DailyIframe) {
+        console.error('Daily.co SDK not loaded!');
+        return;
+    }
+    dailyCall = window.DailyIframe.createCallObject();
+    dailyCall.join({ url: 'https://testtheline.daily.co/thelinemonolith' });
+    dailyCall.on('participant-joined', handleParticipant);
+    dailyCall.on('participant-updated', handleParticipant);
+    dailyCall.on('participant-left', (ev) => {
+        const id = ev.participant.session_id;
+        const el = document.querySelector(`[data-id="daily-${id}"]`);
+        if (el) el.remove();
+        delete dailyParticipants[id];
     });
 }
 
-// ---------------- INIT ----------------
-document.addEventListener('DOMContentLoaded', async () => {
-    console.log('🚀 DOM fully loaded');
-    try {
-        await initializeDailyCall();
-        updateConnectionStatus('connected', 'Connected + Daily Ready');
-        console.log('✅ Daily.co initialized successfully');
-    } catch (err) {
-        console.error('❌ Failed to initialize Daily.co:', err);
-        updateConnectionStatus('disconnected', 'Daily Failed');
+function handleParticipant(ev) {
+    const p = ev.participant;
+    if (!p || !p.videoTrack) return;
+    let video = document.querySelector(`[data-id="daily-${p.session_id}"]`);
+    if (!video) {
+        video = document.createElement('video');
+        video.dataset.id = `daily-${p.session_id}`;
+        video.autoplay = true;
+        video.playsInline = true;
+        video.muted = p.local;
+        video.width = 320;
+        video.height = 240;
+        video.style.position = 'absolute';
+        video.style.top = `${100 + Math.floor(Math.random() * 200)}px`;
+        video.style.left = `${100 + Math.floor(Math.random() * 200)}px`;
+        video.style.borderRadius = '8px';
+        video.style.border = p.local ? '2px solid #28a745' : '2px solid #007bff';
+        stage.appendChild(video);
+        makeInteractive(video);
     }
+    // Attach the video track
+    const stream = new MediaStream([p.videoTrack]);
+    video.srcObject = stream;
+    dailyParticipants[p.session_id] = video;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    updateConnectionStatus('connecting', 'Connecting...');
+    setupDaily();
 });
 
-// Handle page unload
 window.addEventListener('beforeunload', () => {
-    if (dailyCall) {
-        dailyCall.destroy();
+    if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
     }
 });
