@@ -145,42 +145,65 @@ function spawnWebcam() {
 
         console.log('📹 Spawning webcam for participant:', participant.session_id, participant.local ? '(local)' : '(remote)');
 
-        const container = document.createElement('div');
-        container.dataset.id = participantId;
-        container.dataset.filters = '{}';
-        container.style.position = 'absolute';
-        container.style.top = `${100 + Math.floor(Math.random() * 200)}px`;
-        container.style.left = `${100 + Math.floor(Math.random() * 200)}px`;
-        container.style.width = '320px';
-        container.style.height = '240px';
-        container.style.borderRadius = '8px';
-        container.style.overflow = 'hidden';
-        container.style.border = participant.local ? '2px solid #28a745' : '2px solid #007bff';
+        // Create video element
+        const video = document.createElement('video');
+        video.dataset.id = participantId;
+        video.dataset.filters = '{}';
+        video.autoplay = true;
+        video.playsInline = true;
+        video.muted = participant.local; // Mute local to avoid echo
+        video.style.position = 'absolute';
+        video.style.top = `${100 + Math.floor(Math.random() * 200)}px`;
+        video.style.left = `${100 + Math.floor(Math.random() * 200)}px`;
+        video.width = 320;
+        video.height = 240;
+        video.style.objectFit = 'cover';
+        video.style.borderRadius = '8px';
+        video.style.border = participant.local ? '2px solid #28a745' : '2px solid #007bff';
+        video.style.backgroundColor = '#000';
 
+        // Create name label
         const nameLabel = document.createElement('div');
         nameLabel.textContent = participant.user_name || (participant.local ? 'You' : 'Participant');
         nameLabel.style.position = 'absolute';
         nameLabel.style.top = '-20px';
+        nameLabel.style.left = '0';
         nameLabel.style.background = 'rgba(0,0,0,0.7)';
         nameLabel.style.color = 'white';
         nameLabel.style.padding = '2px 6px';
         nameLabel.style.fontSize = '10px';
         nameLabel.style.borderRadius = '3px';
+        nameLabel.style.zIndex = '10';
 
+        // Create container
+        const container = document.createElement('div');
+        container.style.position = 'relative';
+        container.appendChild(video);
         container.appendChild(nameLabel);
+
         stage.appendChild(container);
         makeInteractive(container);
 
-        // Attach Daily.co tracks
+        // Attach Daily.co tracks using the video element
         try {
             dailyCall.attachParticipantTracks(
                 participant.session_id,
-                container,
+                video,
                 { video: true, audio: !participant.local }
             );
             console.log('✅ Video tracks attached for participant:', participant.session_id);
         } catch (error) {
             console.error('❌ Failed to attach tracks for participant:', participant.session_id, error);
+            
+            // Fallback: try to get tracks manually
+            try {
+                if (participant.video) {
+                    video.srcObject = participant.video;
+                    console.log('✅ Fallback: Manual video stream attached for participant:', participant.session_id);
+                }
+            } catch (fallbackError) {
+                console.error('❌ Fallback failed for participant:', participant.session_id, fallbackError);
+            }
         }
     });
 
@@ -303,7 +326,7 @@ function makeInteractive(el) {
                     t.dataset.x = x;
                     t.dataset.y = y;
                     if (isConnected) {
-                        socket.emit('move', { id: t.dataset.id, x, y });
+                    socket.emit('move', { id: t.dataset.id, x, y });
                     }
                 }
             }
@@ -316,7 +339,7 @@ function makeInteractive(el) {
                     t.style.width = `${e.rect.width}px`;
                     t.style.height = `${e.rect.height}px`;
                     if (isConnected) {
-                        socket.emit('resize', { id: t.dataset.id, width: e.rect.width, height: e.rect.height });
+                    socket.emit('resize', { id: t.dataset.id, width: e.rect.width, height: e.rect.height });
                     }
                 }
             }
@@ -407,6 +430,12 @@ document.addEventListener('keydown', (e) => {
         return;
     }
     
+    // Debug elements
+    if (key === 'e' && e.ctrlKey) {
+        debugElements();
+        return;
+    }
+    
     // Filter shortcuts (only if element is hovered)
     if (!hoveredElement) return;
     
@@ -444,15 +473,21 @@ document.addEventListener('keydown', (e) => {
 
 // ---------------- HOVER EFFECTS ----------------
 stage.addEventListener('mouseover', (e) => {
-    if (e.target.tagName === 'VIDEO' || e.target.tagName === 'IMG' || e.target.dataset.id) {
-        hoveredElement = e.target;
-        e.target.style.outline = '2px solid red';
+    // Find the element with data-id (could be the target or its parent container)
+    let targetElement = e.target;
+    if (!targetElement.dataset.id && targetElement.parentElement && targetElement.parentElement.querySelector('[data-id]')) {
+        targetElement = targetElement.parentElement.querySelector('[data-id]');
+    }
+    
+    if (targetElement.tagName === 'VIDEO' || targetElement.tagName === 'IMG' || targetElement.dataset.id) {
+        hoveredElement = targetElement;
+        targetElement.style.outline = '2px solid red';
     }
 });
 
 stage.addEventListener('mouseout', (e) => {
-    if (e.target === hoveredElement) {
-        e.target.style.outline = 'none';
+    if (hoveredElement && (e.target === hoveredElement || e.target.parentElement?.querySelector('[data-id]') === hoveredElement)) {
+        hoveredElement.style.outline = 'none';
         hoveredElement = null;
     }
 });
@@ -471,6 +506,17 @@ function checkDailyCoStatus() {
     console.log('- Room URL:', window.DAILY_CONFIG?.roomUrl);
     
     return true;
+}
+
+// ---------------- DEBUG FUNCTIONS ----------------
+function debugElements() {
+    const allElements = document.querySelectorAll('[data-id]');
+    console.log('🔍 All elements on stage:', allElements.length);
+    allElements.forEach(el => {
+        console.log(`- ${el.dataset.id}: ${el.tagName} at (${el.style.left}, ${el.style.top})`);
+        console.log(`  Visible: ${el.offsetWidth > 0 && el.offsetHeight > 0}`);
+        console.log(`  Style: width=${el.style.width}, height=${el.style.height}`);
+    });
 }
 
 // ---------------- INIT ----------------
