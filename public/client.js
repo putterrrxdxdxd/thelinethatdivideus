@@ -79,6 +79,9 @@ async function initializeDailyCall() {
     const dailyContainer = document.getElementById('daily-container');
     if (dailyContainer && !dailyCall.iframe().parentElement) {
         dailyContainer.appendChild(dailyCall.iframe());
+        console.log('✅ Daily.co iframe appended to #daily-container');
+    } else {
+        console.warn('⚠️ Daily.co iframe NOT appended (container missing or already present)');
     }
 
     dailyCall.on('joined-meeting', () => {
@@ -122,12 +125,20 @@ async function initializeDailyCall() {
         alert('Daily.co error: ' + event.errorMsg);
     });
 
-    await dailyCall.join({ url: roomUrl });
+    try {
+        console.log('🚀 Attempting to join Daily.co room...');
+        await dailyCall.join({ url: roomUrl });
+        console.log('✅ Successfully joined Daily.co room');
+    } catch (err) {
+        console.error('❌ Failed to join Daily.co room:', err);
+    }
 
     const localParticipant = dailyCall.participants().local;
     if (localParticipant) {
         console.log('👤 Local participant:', localParticipant);
         participants.set(localParticipant.session_id, localParticipant);
+    } else {
+        console.warn('⚠️ No local participant found after join');
     }
     return dailyCall;
 }
@@ -395,6 +406,18 @@ window.addEventListener('drop', (e) => {
 });
 
 // ---------------- KEYBOARD SHORTCUTS ----------------
+function debugDailyParticipants() {
+    if (!dailyCall) {
+        console.log('❌ Daily.co not initialized');
+        return;
+    }
+    const parts = dailyCall.participants();
+    console.log('🔍 Daily.co participants:', parts);
+    Object.values(parts).forEach(p => {
+        console.log(`- ${p.session_id} (${p.local ? 'local' : 'remote'}): video=${p.video}, audio=${p.audio}`);
+    });
+}
+
 document.addEventListener('keydown', (e) => {
     const key = e.key.toLowerCase();
     
@@ -421,7 +444,7 @@ document.addEventListener('keydown', (e) => {
         return;
     }
     
-    // Delete selected element
+    // Delete selected element (video, webcam, or image)
     if (key === 'x' && hoveredElement) {
         const id = hoveredElement.dataset.id;
         hoveredElement.remove();
@@ -439,6 +462,12 @@ document.addEventListener('keydown', (e) => {
     // Debug elements
     if (key === 'e' && e.ctrlKey) {
         debugElements();
+        return;
+    }
+
+    // Debug Daily.co participants
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'd') {
+        debugDailyParticipants();
         return;
     }
     
