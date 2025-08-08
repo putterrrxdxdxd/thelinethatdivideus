@@ -81,6 +81,8 @@ async function initializeDailyCall() {
     // Use room URL from configuration
     const roomUrl = window.DAILY_CONFIG?.roomUrl || 'https://your-daily-domain.daily.co/your-room-name';
     
+    console.log('🔗 Connecting to Daily.co room:', roomUrl);
+    
     dailyCall = window.DailyIframe.createFrame(document.createElement('div'), {
         iframeStyle: {
             width: '100%',
@@ -92,43 +94,51 @@ async function initializeDailyCall() {
     });
 
     dailyCall.on('joined-meeting', () => {
-        console.log('Joined Daily.co meeting');
+        console.log('✅ Joined Daily.co meeting');
+        // Automatically spawn local webcam when joining
+        spawnWebcam();
     });
 
     dailyCall.on('participant-joined', (event) => {
-        console.log('Participant joined:', event.participant);
+        console.log('👤 Participant joined:', event.participant);
         participants.set(event.participant.session_id, event.participant);
         spawnRemoteParticipant(event.participant);
     });
 
     dailyCall.on('participant-updated', (event) => {
-        console.log('Participant updated:', event.participant);
+        console.log('🔄 Participant updated:', event.participant);
         participants.set(event.participant.session_id, event.participant);
         updateRemoteParticipant(event.participant);
     });
 
     dailyCall.on('participant-left', (event) => {
-        console.log('Participant left:', event.participant);
+        console.log('👋 Participant left:', event.participant);
         participants.delete(event.participant.session_id);
         removeRemoteParticipant(event.participant.session_id);
     });
 
     dailyCall.on('camera-error', (event) => {
-        console.error('Camera error:', event);
+        console.error('📹 Camera error:', event);
         alert('Camera error: ' + event.errorMsg);
     });
 
     dailyCall.on('mic-error', (event) => {
-        console.error('Microphone error:', event);
+        console.error('🎤 Microphone error:', event);
         alert('Microphone error: ' + event.errorMsg);
+    });
+
+    dailyCall.on('error', (event) => {
+        console.error('❌ Daily.co error:', event);
+        alert('Daily.co error: ' + event.errorMsg);
     });
 
     try {
         await dailyCall.join({ url: roomUrl });
+        console.log('✅ Successfully joined Daily.co room');
         return dailyCall;
     } catch (error) {
-        console.error('Failed to join Daily.co call:', error);
-        alert('Failed to join video call: ' + error.errorMsg);
+        console.error('❌ Failed to join Daily.co call:', error);
+        alert('Failed to join video call: ' + (error.errorMsg || error.message));
         return null;
     }
 }
@@ -137,8 +147,13 @@ async function initializeDailyCall() {
 function spawnRemoteParticipant(participant) {
     if (participant.local) return; // Don't spawn local participant
     
+    console.log('👤 Spawning remote participant:', participant.session_id);
+    
     const containerId = `daily-participant-${participant.session_id}`;
-    if (document.querySelector(`[data-id="${containerId}"]`)) return;
+    if (document.querySelector(`[data-id="${containerId}"]`)) {
+        console.log('👤 Participant container already exists:', containerId);
+        return;
+    }
 
     const container = document.createElement('div');
     container.dataset.id = containerId;
@@ -151,6 +166,7 @@ function spawnRemoteParticipant(participant) {
     container.style.backgroundColor = '#000';
     container.style.borderRadius = '8px';
     container.style.overflow = 'hidden';
+    container.style.border = '2px solid #007bff';
 
     stage.appendChild(container);
     makeInteractive(container);
@@ -204,6 +220,9 @@ function spawnRemoteParticipant(participant) {
     // Set video source from Daily.co
     if (participant.video) {
         video.srcObject = participant.video;
+        console.log('✅ Remote participant video stream attached');
+    } else {
+        console.log('⚠️ No video stream available for participant');
     }
 }
 
@@ -211,11 +230,15 @@ function spawnRemoteParticipant(participant) {
 function updateRemoteParticipant(participant) {
     const containerId = `daily-participant-${participant.session_id}`;
     const container = document.querySelector(`[data-id="${containerId}"]`);
-    if (!container) return;
+    if (!container) {
+        console.log('⚠️ Container not found for participant update:', participant.session_id);
+        return;
+    }
 
     const video = container.querySelector('video');
     if (video && participant.video) {
         video.srcObject = participant.video;
+        console.log('🔄 Updated video stream for participant:', participant.session_id);
     }
 
     const nameLabel = container.querySelector('span');
@@ -276,6 +299,13 @@ function makeInteractive(el) {
 // ---------- SPAWN WEBCAM: unlimited clones
 function spawnWebcam(id = null, peerId = socket.id) {
     id = id || `webcam-${socket.id}-${Date.now()}`; // Unique per webcam box!
+    
+    // Check if webcam already exists
+    if (document.querySelector(`[data-id="${id}"]`)) {
+        console.log('📹 Webcam already exists:', id);
+        return;
+    }
+    
     const webcam = document.createElement('video');
     webcam.dataset.id = id;
     webcam.dataset.peer = peerId;
@@ -287,15 +317,32 @@ function spawnWebcam(id = null, peerId = socket.id) {
     webcam.style.left = '100px';
     webcam.width = 320;
     webcam.height = 240;
+    webcam.style.objectFit = 'cover';
+    webcam.style.borderRadius = '8px';
+    webcam.style.border = '2px solid #333';
+    
     stage.appendChild(webcam);
     makeInteractive(webcam);
 
     if (peerId === socket.id) {
-        getWebcamStream().then(s => { if (s) webcam.srcObject = s; });
+        // Local webcam - get stream from Daily.co or local media
+        if (dailyCall && dailyCall.localVideo()) {
+            console.log('📹 Using Daily.co local video stream');
+            // Daily.co handles the stream automatically
+        } else {
+            console.log('📹 Using local media stream');
+            getWebcamStream().then(s => { 
+                if (s) {
+                    webcam.srcObject = s;
+                    console.log('✅ Local webcam stream attached');
+                }
+            });
+        }
     }
 
     if (!id.includes('-from-server') && isConnected) {
         socket.emit('spawn', { type: 'webcam', id, peerId });
+        console.log('📤 Broadcasted webcam spawn to other users');
     }
 }
 
@@ -447,6 +494,11 @@ document.addEventListener('keydown', (e) => {
         hoveredElement = null;
         return;
     }
+    // Daily.co status check
+    if (key === 's' && e.ctrlKey) {
+        checkDailyCoStatus();
+        return;
+    }
     if (!hoveredElement) return;
     const filters = JSON.parse(hoveredElement.dataset.filters || '{}');
     if (key === 'g') filters.grayscale = filters.grayscale ? 0 : 100;
@@ -494,10 +546,39 @@ stage.addEventListener('mouseout', (e) => {
 
 // Initialize Daily.co call when page loads
 document.addEventListener('DOMContentLoaded', async () => {
-    console.log('DOM Content Loaded');
-    await initializeDailyCall();
+    console.log('🚀 DOM Content Loaded - Initializing Daily.co...');
+    
+    try {
+        await initializeDailyCall();
+        console.log('✅ Daily.co initialized successfully');
+        
+        // Add Daily.co status to connection indicator
+        if (dailyCall) {
+            updateConnectionStatus('connected', 'Connected + Daily.co Ready');
+        }
+    } catch (error) {
+        console.error('❌ Failed to initialize Daily.co:', error);
+        updateConnectionStatus('disconnected', 'Daily.co Failed');
+    }
+    
     initializeControlPanel();
 });
+
+// Add Daily.co status check function
+function checkDailyCoStatus() {
+    if (!dailyCall) {
+        console.log('❌ Daily.co not initialized');
+        return false;
+    }
+    
+    console.log('📊 Daily.co Status:');
+    console.log('- Local Audio:', dailyCall.localAudio());
+    console.log('- Local Video:', dailyCall.localVideo());
+    console.log('- Participants:', participants.size);
+    console.log('- Room URL:', window.DAILY_CONFIG?.roomUrl);
+    
+    return true;
+}
 
 // Handle page unload
 window.addEventListener('beforeunload', () => {
