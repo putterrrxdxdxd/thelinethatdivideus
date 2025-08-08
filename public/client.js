@@ -75,6 +75,12 @@ async function initializeDailyCall() {
         iframeStyle: { width: '100%', height: '100%', border: '0' }
     });
 
+    // Append the Daily.co iframe to the hidden container so camera/mic access works
+    const dailyContainer = document.getElementById('daily-container');
+    if (dailyContainer && !dailyCall.iframe().parentElement) {
+        dailyContainer.appendChild(dailyCall.iframe());
+    }
+
     dailyCall.on('joined-meeting', () => {
         console.log('✅ Joined Daily.co meeting');
     });
