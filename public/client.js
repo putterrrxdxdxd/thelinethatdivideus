@@ -134,10 +134,48 @@ function spawnImage(src, id = null) {
     if (isConnected) socket.emit('spawn', { type: 'image', src, id });
 }
 
+// --- TEXT BOX SPAWN ---
+function spawnTextBox({ text = '', id = null, x = 100, y = 100, width = 200, height = 50 } = {}) {
+    id = id || `text-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    if (document.querySelector(`[data-id="${id}"]`)) return;
+    const box = document.createElement('div');
+    box.dataset.id = id;
+    box.dataset.type = 'text';
+    box.contentEditable = true;
+    box.innerText = text;
+    box.style.position = 'absolute';
+    box.style.top = y + 'px';
+    box.style.left = x + 'px';
+    box.style.width = width + 'px';
+    box.style.height = height + 'px';
+    box.style.background = 'rgba(255,255,200,0.95)';
+    box.style.border = '1.5px solid #888';
+    box.style.borderRadius = '8px';
+    box.style.padding = '8px';
+    box.style.fontSize = '18px';
+    box.style.overflow = 'auto';
+    box.style.zIndex = highestZ;
+    stage.appendChild(box);
+    makeInteractive(box);
+    box.addEventListener('input', () => {
+        if (isConnected) socket.emit('text-update', { id, text: box.innerText });
+    });
+    if (isConnected) socket.emit('spawn', { type: 'text', text, id, x, y, width, height });
+}
+
+// --- CLICK TO SPAWN TEXT BOX ---
+stage.addEventListener('click', (e) => {
+    // Only spawn if not clicking on an existing element
+    if (e.target === stage) {
+        spawnTextBox({ x: e.offsetX, y: e.offsetY });
+    }
+});
+
 // ---------------- SOCKET EVENTS ----------------
 socket.on('spawn', (data) => {
     if (data.type === 'video') spawnVideo(data.src, data.id);
     if (data.type === 'image') spawnImage(data.src, data.id);
+    if (data.type === 'text') spawnTextBox(data);
 });
 
 socket.on('move', ({ id, x, y }) => {
@@ -167,6 +205,12 @@ socket.on('filter', ({ id, filters, sender }) => {
 });
 
 socket.on('delete', ({ id }) => removeElement(id));
+socket.on('text-update', ({ id, text }) => {
+    const el = document.querySelector(`[data-id="${id}"]`);
+    if (el && el.dataset.type === 'text') {
+        el.innerText = text;
+    }
+});
 
 function removeElement(id) {
     const el = document.querySelector(`[data-id="${id}"]`);
@@ -273,7 +317,7 @@ document.addEventListener('keydown', (e) => {
         input.click();
         return;
     }
-    if (key === 'x' && hoveredElement) {
+    if (key === '/' && hoveredElement) {
         const id = hoveredElement.dataset.id;
         hoveredElement.remove();
         if (isConnected) socket.emit('delete', { id });

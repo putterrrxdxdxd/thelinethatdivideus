@@ -60,7 +60,12 @@ io.on('connection', (socket) => {
     socket.on('spawn', (data) => {
         try {
             if (!stageState.find(el => el.id === data.id)) {
-                stageState.push({ ...data, x: 0, y: 0, width: 320, height: 240, filters: {} });
+                // Support text elements
+                if (data.type === 'text') {
+                    stageState.push({ ...data, x: data.x, y: data.y, width: data.width, height: data.height, text: data.text });
+                } else {
+                    stageState.push({ ...data, x: 0, y: 0, width: 320, height: 240, filters: {} });
+                }
                 socket.broadcast.emit('spawn', data);
                 console.log(`📦 Spawned: ${data.type} (${data.id})`);
             }
@@ -118,6 +123,19 @@ io.on('connection', (socket) => {
             console.log(`🗑️ Deleted: ${data.id}`);
         } catch (error) {
             console.error('❌ Delete error:', error);
+        }
+    });
+
+    // TEXT UPDATE: update text content & broadcast
+    socket.on('text-update', (data) => {
+        try {
+            const item = stageState.find(el => el.id === data.id);
+            if (item && item.type === 'text') {
+                item.text = data.text;
+                socket.broadcast.emit('text-update', data);
+            }
+        } catch (error) {
+            console.error('❌ Text update error:', error);
         }
     });
 
