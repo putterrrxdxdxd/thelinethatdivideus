@@ -221,9 +221,24 @@ socket.on('text-update', ({ id, text }) => {
     }
 });
 
+// --- When a Daily video is deleted, promote audio to next duplicate if any ---
 function removeElement(id) {
     const el = document.querySelector(`[data-id="${id}"]`);
-    if (el) el.remove();
+    if (el) {
+        // If it's a Daily video, promote audio to next duplicate
+        if (id.startsWith('daily-')) {
+            const sessionId = id.replace('daily-', '');
+            el.remove();
+            // Find next duplicate
+            const next = document.querySelector(`[data-id="daily-${sessionId}"]`);
+            if (next && dailyCall && dailyCall.participants()[sessionId]) {
+                // Re-attach with audio
+                handleParticipant({ participant: dailyCall.participants()[sessionId] });
+            }
+            return;
+        }
+        el.remove();
+    }
 }
 
 // ---------------- INTERACT.JS ----------------
@@ -428,12 +443,11 @@ function setupDaily() {
 function handleParticipant(ev) {
     const p = ev.participant;
     if (!p || !p.videoTrack) return;
-    let video = document.querySelector(`[data-id="daily-${p.session_id}"]`);
-    // --- Collaborative position storage ---
-    // Try to get stored position from window.dailyPositions
-    if (!window.dailyPositions) window.dailyPositions = {};
-    let pos = window.dailyPositions[p.session_id] || { x: 0, y: 0 };
-    if (!video) {
+    // Find all video elements for this participant
+    const allVideos = Array.from(document.querySelectorAll(`[data-id="daily-${p.session_id}"]`));
+    let video = allVideos[0];
+    // If this is a new duplicate, create a new element
+    if (!video || (allVideos.length && ev.forceDuplicate)) {
         video = document.createElement('video');
         video.dataset.id = `daily-${p.session_id}`;
         video.autoplay = true;
@@ -442,6 +456,11 @@ function handleParticipant(ev) {
         video.width = 320;
         video.height = 240;
         video.style.position = 'absolute';
+        // Use stored position if available
+        let pos = { x: 0, y: 0 };
+        if (window.dailyPositions && window.dailyPositions[p.session_id]) {
+            pos = window.dailyPositions[p.session_id];
+        }
         video.style.top = `${pos.y || 100 + Math.floor(Math.random() * 200)}px`;
         video.style.left = `${pos.x || 100 + Math.floor(Math.random() * 200)}px`;
         video.style.borderRadius = '8px';
@@ -452,10 +471,13 @@ function handleParticipant(ev) {
         stage.appendChild(video);
         makeInteractive(video);
     }
-    // Attach both video and audio tracks if available
-    const tracks = [];
+    // --- Only one element per participant gets audio ---
+    // If this is the first (or only) element, attach both video and audio tracks
+    // Otherwise, attach only the video track
+    const isFirst = Array.from(document.querySelectorAll(`[data-id="daily-${p.session_id}"]`)).indexOf(video) === 0;
+    let tracks = [];
     if (p.videoTrack) tracks.push(p.videoTrack);
-    if (p.audioTrack) tracks.push(p.audioTrack);
+    if (isFirst && p.audioTrack) tracks.push(p.audioTrack);
     const stream = new MediaStream(tracks);
     video.srcObject = stream;
     dailyParticipants[p.session_id] = video;
