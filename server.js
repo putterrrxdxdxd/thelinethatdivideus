@@ -60,11 +60,14 @@ io.on('connection', (socket) => {
     socket.on('spawn', (data) => {
         try {
             if (!stageState.find(el => el.id === data.id)) {
-                // Support text elements
+                // Store all types, not just text/video/image
                 if (data.type === 'text') {
                     stageState.push({ ...data, x: data.x, y: data.y, width: data.width, height: data.height, text: data.text });
-                } else {
+                } else if (data.type === 'video' || data.type === 'image') {
                     stageState.push({ ...data, x: 0, y: 0, width: 320, height: 240, filters: {} });
+                } else {
+                    // For daily-cam, daily-cam-duplicate, and any other types
+                    stageState.push({ ...data });
                 }
                 socket.broadcast.emit('spawn', data);
                 console.log(`📦 Spawned: ${data.type} (${data.id})`);

@@ -185,6 +185,39 @@ socket.on('spawn', (data) => {
             handleParticipant({ participant: dailyCall.participants()[data.session_id] });
         }
     }
+    if (data.type === 'daily-cam-duplicate' && data.session_id) {
+        // Set position in store for this duplicate
+        if (!window.dailyPositions) window.dailyPositions = {};
+        window.dailyPositions[data.id] = { x: data.x, y: data.y };
+        // Find participant info
+        if (dailyCall && dailyCall.participants()[data.session_id]) {
+            handleParticipant({ participant: dailyCall.participants()[data.session_id], forceDuplicate: true, id: data.id, x: data.x, y: data.y });
+        }
+    }
+});
+
+socket.on('init', (stageState) => {
+    // Remove all current elements from the stage
+    document.querySelectorAll('[data-id]').forEach(el => el.remove());
+    // Recreate all elements from the state
+    for (const data of stageState) {
+        if (data.type === 'video') spawnVideo(data.src, data.id);
+        else if (data.type === 'image') spawnImage(data.src, data.id);
+        else if (data.type === 'text') spawnTextBox(data);
+        else if (data.type === 'daily-cam' && data.session_id) {
+            if (!window.dailyPositions) window.dailyPositions = {};
+            window.dailyPositions[data.session_id] = { x: data.x, y: data.y };
+            if (dailyCall && dailyCall.participants()[data.session_id]) {
+                handleParticipant({ participant: dailyCall.participants()[data.session_id] });
+            }
+        } else if (data.type === 'daily-cam-duplicate' && data.session_id) {
+            if (!window.dailyPositions) window.dailyPositions = {};
+            window.dailyPositions[data.id] = { x: data.x, y: data.y };
+            if (dailyCall && dailyCall.participants()[data.session_id]) {
+                handleParticipant({ participant: dailyCall.participants()[data.session_id], forceDuplicate: true, id: data.id, x: data.x, y: data.y });
+            }
+        }
+    }
 });
 
 socket.on('move', ({ id, x, y }) => {
@@ -346,9 +379,33 @@ document.addEventListener('keydown', (e) => {
     if (key === 'w') {
         // Respawn local Daily cam if missing
         const local = dailyCall && dailyCall.participants().local;
-        if (local && !document.querySelector(`[data-id="daily-${local.session_id}"]`)) {
-            respawnLocalDailyCam();
-            return;
+        if (local) {
+            const mainId = `daily-${local.session_id}`;
+            const mainEl = document.querySelector(`[data-id="${mainId}"]`);
+            if (!mainEl) {
+                respawnLocalDailyCam();
+                return;
+            } else {
+                // Create a collaborative duplicate
+                const dupId = `daily-${local.session_id}-dup-${Date.now()}`;
+                // Use stored position if available
+                let pos = { x: 0, y: 0 };
+                if (window.dailyPositions && window.dailyPositions[local.session_id]) {
+                    pos = window.dailyPositions[local.session_id];
+                }
+                if (isConnected) {
+                    socket.emit('spawn', {
+                        type: 'daily-cam-duplicate',
+                        id: dupId,
+                        session_id: local.session_id,
+                        x: pos.x + 40, // offset so it's not on top
+                        y: pos.y + 40
+                    });
+                }
+                // Also create locally for instant feedback
+                handleParticipant({ participant: local, forceDuplicate: true, id: dupId, x: pos.x + 40, y: pos.y + 40 });
+                return;
+            }
         }
         // Otherwise, spawnWebcam (legacy local webcam)
         spawnWebcam();
@@ -443,13 +500,14 @@ function setupDaily() {
 function handleParticipant(ev) {
     const p = ev.participant;
     if (!p || !p.videoTrack) return;
-    // Find all video elements for this participant
-    const allVideos = Array.from(document.querySelectorAll(`[data-id="daily-${p.session_id}"]`));
-    let video = allVideos[0];
+    // Use custom id for duplicates
+    const id = ev.id || `daily-${p.session_id}`;
+    // Find all video elements for this participant with this id
+    let video = document.querySelector(`[data-id="${id}"]`);
     // If this is a new duplicate, create a new element
-    if (!video || (allVideos.length && ev.forceDuplicate)) {
+    if (!video) {
         video = document.createElement('video');
-        video.dataset.id = `daily-${p.session_id}`;
+        video.dataset.id = id;
         video.autoplay = true;
         video.playsInline = true;
         video.muted = p.local;
@@ -458,8 +516,10 @@ function handleParticipant(ev) {
         video.style.position = 'absolute';
         // Use stored position if available
         let pos = { x: 0, y: 0 };
-        if (window.dailyPositions && window.dailyPositions[p.session_id]) {
-            pos = window.dailyPositions[p.session_id];
+        if (typeof ev.x === 'number' && typeof ev.y === 'number') {
+            pos = { x: ev.x, y: ev.y };
+        } else if (window.dailyPositions && window.dailyPositions[id]) {
+            pos = window.dailyPositions[id];
         }
         video.style.top = `${pos.y || 100 + Math.floor(Math.random() * 200)}px`;
         video.style.left = `${pos.x || 100 + Math.floor(Math.random() * 200)}px`;
@@ -472,12 +532,11 @@ function handleParticipant(ev) {
         makeInteractive(video);
     }
     // --- Only one element per participant gets audio ---
-    // If this is the first (or only) element, attach both video and audio tracks
+    // If this is the main element (id === daily-<session_id>), attach both video and audio tracks
     // Otherwise, attach only the video track
-    const isFirst = Array.from(document.querySelectorAll(`[data-id="daily-${p.session_id}"]`)).indexOf(video) === 0;
     let tracks = [];
     if (p.videoTrack) tracks.push(p.videoTrack);
-    if (isFirst && p.audioTrack) tracks.push(p.audioTrack);
+    if (id === `daily-${p.session_id}` && p.audioTrack) tracks.push(p.audioTrack);
     const stream = new MediaStream(tracks);
     video.srcObject = stream;
     dailyParticipants[p.session_id] = video;
