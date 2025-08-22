@@ -236,6 +236,12 @@ function makeInteractive(el) {
                     t.style.transform = `translate(${x}px, ${y}px)`;
                     t.dataset.x = x;
                     t.dataset.y = y;
+                    // If it's a Daily video, update the position store
+                    if (t.dataset.id && t.dataset.id.startsWith('daily-')) {
+                        const sessionId = t.dataset.id.replace('daily-', '');
+                        if (!window.dailyPositions) window.dailyPositions = {};
+                        window.dailyPositions[sessionId] = { x, y };
+                    }
                     if (isConnected) {
                         socket.emit('move', { id: t.dataset.id, x, y });
                     }
@@ -302,7 +308,22 @@ window.addEventListener('drop', (e) => {
 // ---------------- KEYBOARD SHORTCUTS ----------------
 document.addEventListener('keydown', (e) => {
     const key = e.key.toLowerCase();
+    if (key === 'm') {
+        toggleDailyAudioMute();
+        return;
+    }
+    if (key === 'n') {
+        toggleDailyVideoMute();
+        return;
+    }
     if (key === 'w') {
+        // Respawn local Daily cam if missing
+        const local = dailyCall && dailyCall.participants().local;
+        if (local && !document.querySelector(`[data-id="daily-${local.session_id}"]`)) {
+            respawnLocalDailyCam();
+            return;
+        }
+        // Otherwise, spawnWebcam (legacy local webcam)
         spawnWebcam();
         return;
     }
@@ -396,6 +417,10 @@ function handleParticipant(ev) {
     const p = ev.participant;
     if (!p || !p.videoTrack) return;
     let video = document.querySelector(`[data-id="daily-${p.session_id}"]`);
+    // --- Collaborative position storage ---
+    // Try to get stored position from window.dailyPositions
+    if (!window.dailyPositions) window.dailyPositions = {};
+    let pos = window.dailyPositions[p.session_id] || { x: 0, y: 0 };
     if (!video) {
         video = document.createElement('video');
         video.dataset.id = `daily-${p.session_id}`;
@@ -405,22 +430,59 @@ function handleParticipant(ev) {
         video.width = 320;
         video.height = 240;
         video.style.position = 'absolute';
-        video.style.top = `${100 + Math.floor(Math.random() * 200)}px`;
-        video.style.left = `${100 + Math.floor(Math.random() * 200)}px`;
+        video.style.top = `${pos.y || 100 + Math.floor(Math.random() * 200)}px`;
+        video.style.left = `${pos.x || 100 + Math.floor(Math.random() * 200)}px`;
         video.style.borderRadius = '8px';
         video.style.border = p.local ? '2px solid #28a745' : '2px solid #007bff';
+        video.dataset.x = pos.x;
+        video.dataset.y = pos.y;
+        video.style.transform = `translate(${pos.x}px, ${pos.y}px)`;
         stage.appendChild(video);
         makeInteractive(video);
     }
-    // Attach the video track
-    const stream = new MediaStream([p.videoTrack]);
+    // Attach both video and audio tracks if available
+    const tracks = [];
+    if (p.videoTrack) tracks.push(p.videoTrack);
+    if (p.audioTrack) tracks.push(p.audioTrack);
+    const stream = new MediaStream(tracks);
     video.srcObject = stream;
     dailyParticipants[p.session_id] = video;
 }
 
+// --- Daily cam mute/unmute controls ---
+function toggleDailyAudioMute() {
+    if (dailyCall) {
+        const isMuted = dailyCall.localAudio();
+        dailyCall.setLocalAudio(!isMuted);
+        alert('Audio ' + (isMuted ? 'unmuted' : 'muted'));
+    }
+}
+function toggleDailyVideoMute() {
+    if (dailyCall) {
+        const isMuted = dailyCall.localVideo();
+        dailyCall.setLocalVideo(!isMuted);
+        alert('Video ' + (isMuted ? 'unmuted' : 'muted'));
+    }
+}
+// --- Respawn local Daily cam if deleted ---
+function respawnLocalDailyCam() {
+    if (!dailyCall) return;
+    const local = dailyCall.participants().local;
+    if (!local) return;
+    handleParticipant({ participant: local });
+}
+
+// --- Wire up Daily cam control buttons ---
 document.addEventListener('DOMContentLoaded', () => {
     updateConnectionStatus('connecting', 'Connecting...');
     setupDaily();
+    // Button event listeners
+    const btnAudio = document.getElementById('btn-daily-audio');
+    const btnVideo = document.getElementById('btn-daily-video');
+    const btnRespawn = document.getElementById('btn-daily-respawn');
+    if (btnAudio) btnAudio.onclick = toggleDailyAudioMute;
+    if (btnVideo) btnVideo.onclick = toggleDailyVideoMute;
+    if (btnRespawn) btnRespawn.onclick = respawnLocalDailyCam;
 });
 
 window.addEventListener('beforeunload', () => {
