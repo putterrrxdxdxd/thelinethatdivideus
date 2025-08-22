@@ -94,44 +94,46 @@ async function spawnWebcam(id = null) {
 }
 
 // ---------------- MEDIA SPAWN ----------------
-function spawnVideo(src = 'archives/video1.mp4', id = null) {
+function spawnVideo(src = 'archives/video1.mp4', id = null, x = 150, y = 150, filters = {}) {
     id = id || `video-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     if (document.querySelector(`[data-id="${id}"]`)) return;
     const video = document.createElement('video');
     video.dataset.id = id;
-    video.dataset.filters = '{}';
+    video.dataset.filters = JSON.stringify(filters || {});
     video.src = src;
     video.autoplay = true;
     video.loop = true;
     video.muted = true;
     video.controls = true;
     video.style.position = 'absolute';
-    video.style.top = '150px';
-    video.style.left = '150px';
+    video.style.top = `${y}px`;
+    video.style.left = `${x}px`;
     video.width = 320;
     video.height = 240;
     video.style.borderRadius = '8px';
     stage.appendChild(video);
     makeInteractive(video);
-    if (isConnected) socket.emit('spawn', { type: 'video', src, id });
+    updateFilters(video, false);
+    if (isConnected) socket.emit('spawn', { type: 'video', src, id, x, y, filters });
 }
 
-function spawnImage(src, id = null) {
+function spawnImage(src, id = null, x = 200, y = 200, filters = {}) {
     id = id || `image-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     if (document.querySelector(`[data-id="${id}"]`)) return;
     const img = document.createElement('img');
     img.dataset.id = id;
-    img.dataset.filters = '{}';
+    img.dataset.filters = JSON.stringify(filters || {});
     img.src = src;
     img.style.position = 'absolute';
-    img.style.top = '200px';
-    img.style.left = '200px';
+    img.style.top = `${y}px`;
+    img.style.left = `${x}px`;
     img.width = 320;
     img.height = 240;
     img.style.borderRadius = '8px';
     stage.appendChild(img);
     makeInteractive(img);
-    if (isConnected) socket.emit('spawn', { type: 'image', src, id });
+    updateFilters(img, false);
+    if (isConnected) socket.emit('spawn', { type: 'image', src, id, x, y, filters });
 }
 
 // --- TEXT BOX SPAWN ---
@@ -173,8 +175,8 @@ stage.addEventListener('click', (e) => {
 
 // ---------------- SOCKET EVENTS ----------------
 socket.on('spawn', (data) => {
-    if (data.type === 'video') spawnVideo(data.src, data.id);
-    if (data.type === 'image') spawnImage(data.src, data.id);
+    if (data.type === 'video') spawnVideo(data.src, data.id, data.x, data.y, data.filters);
+    if (data.type === 'image') spawnImage(data.src, data.id, data.x, data.y, data.filters);
     if (data.type === 'text') spawnTextBox(data);
     if (data.type === 'daily-cam' && data.session_id) {
         // Set position in store
@@ -201,20 +203,20 @@ socket.on('init', (stageState) => {
     document.querySelectorAll('[data-id]').forEach(el => el.remove());
     // Recreate all elements from the state
     for (const data of stageState) {
-        if (data.type === 'video') spawnVideo(data.src, data.id);
-        else if (data.type === 'image') spawnImage(data.src, data.id);
+        if (data.type === 'video') spawnVideo(data.src, data.id, data.x, data.y, data.filters);
+        else if (data.type === 'image') spawnImage(data.src, data.id, data.x, data.y, data.filters);
         else if (data.type === 'text') spawnTextBox(data);
         else if (data.type === 'daily-cam' && data.session_id) {
             if (!window.dailyPositions) window.dailyPositions = {};
             window.dailyPositions[data.session_id] = { x: data.x, y: data.y };
             if (dailyCall && dailyCall.participants()[data.session_id]) {
-                handleParticipant({ participant: dailyCall.participants()[data.session_id] });
+                handleParticipant({ participant: dailyCall.participants()[data.session_id], x: data.x, y: data.y, filters: data.filters });
             }
         } else if (data.type === 'daily-cam-duplicate' && data.session_id) {
             if (!window.dailyPositions) window.dailyPositions = {};
             window.dailyPositions[data.id] = { x: data.x, y: data.y };
             if (dailyCall && dailyCall.participants()[data.session_id]) {
-                handleParticipant({ participant: dailyCall.participants()[data.session_id], forceDuplicate: true, id: data.id, x: data.x, y: data.y });
+                handleParticipant({ participant: dailyCall.participants()[data.session_id], forceDuplicate: true, id: data.id, x: data.x, y: data.y, filters: data.filters });
             }
         }
     }
@@ -339,16 +341,68 @@ function updateFilters(el, send = true) {
     if (send && isConnected) socket.emit('filter', { id: el.dataset.id, filters, sender: socket.id });
 }
 
+// --- Compress image to max 1280x1280 and under 1MB ---
+async function compressImage(file, maxSize = 1024 * 1024, maxDim = 1280) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            img.onload = () => {
+                let width = img.width;
+                let height = img.height;
+                if (width > maxDim || height > maxDim) {
+                    if (width > height) {
+                        height = Math.round(height * (maxDim / width));
+                        width = maxDim;
+                    } else {
+                        width = Math.round(width * (maxDim / height));
+                        height = maxDim;
+                    }
+                }
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                // Try different qualities to get under maxSize
+                let quality = 0.92;
+                function tryCompress() {
+                    const dataUrl = canvas.toDataURL('image/jpeg', quality);
+                    // Estimate size in bytes
+                    const size = Math.ceil((dataUrl.length - 'data:image/jpeg;base64,'.length) * 3 / 4);
+                    if (size <= maxSize || quality < 0.5) {
+                        resolve(dataUrl);
+                    } else {
+                        quality -= 0.07;
+                        tryCompress();
+                    }
+                }
+                tryCompress();
+            };
+            img.onerror = reject;
+            img.src = e.target.result;
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+}
+
 // ---------------- FILE DROP ----------------
 function handleFile(file) {
     if (!file) return;
     if (file.type.startsWith('video/')) {
+        if (file.size > 1024 * 1024) {
+            alert('Video file too large! Max 1MB allowed.');
+            return;
+        }
         const url = URL.createObjectURL(file);
         spawnVideo(url);
     } else if (file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onload = (event) => spawnImage(event.target.result);
-        reader.readAsDataURL(file);
+        compressImage(file).then(dataUrl => {
+            spawnImage(dataUrl);
+        }).catch(() => {
+            alert('Failed to compress image.');
+        });
     } else {
         alert('Unsupported file type: ' + file.type);
     }
@@ -528,8 +582,11 @@ function handleParticipant(ev) {
         video.dataset.x = pos.x;
         video.dataset.y = pos.y;
         video.style.transform = `translate(${pos.x}px, ${pos.y}px)`;
+        // Set filters if provided
+        video.dataset.filters = JSON.stringify(ev.filters || {});
         stage.appendChild(video);
         makeInteractive(video);
+        updateFilters(video, false);
     }
     // --- Only one element per participant gets audio ---
     // If this is the main element (id === daily-<session_id>), attach both video and audio tracks
