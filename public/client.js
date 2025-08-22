@@ -176,6 +176,15 @@ socket.on('spawn', (data) => {
     if (data.type === 'video') spawnVideo(data.src, data.id);
     if (data.type === 'image') spawnImage(data.src, data.id);
     if (data.type === 'text') spawnTextBox(data);
+    if (data.type === 'daily-cam' && data.session_id) {
+        // Set position in store
+        if (!window.dailyPositions) window.dailyPositions = {};
+        window.dailyPositions[data.session_id] = { x: data.x, y: data.y };
+        // Find participant info
+        if (dailyCall && dailyCall.participants()[data.session_id]) {
+            handleParticipant({ participant: dailyCall.participants()[data.session_id] });
+        }
+    }
 });
 
 socket.on('move', ({ id, x, y }) => {
@@ -223,6 +232,7 @@ function bringToFront(el) {
     el.style.zIndex = highestZ;
 }
 
+// --- When moving a Daily video, update the position store and emit move ---
 function makeInteractive(el) {
     bringToFront(el);
     interact(el)
@@ -241,8 +251,10 @@ function makeInteractive(el) {
                         const sessionId = t.dataset.id.replace('daily-', '');
                         if (!window.dailyPositions) window.dailyPositions = {};
                         window.dailyPositions[sessionId] = { x, y };
-                    }
-                    if (isConnected) {
+                        if (isConnected) {
+                            socket.emit('move', { id: t.dataset.id, x, y });
+                        }
+                    } else if (isConnected) {
                         socket.emit('move', { id: t.dataset.id, x, y });
                     }
                 }
@@ -469,6 +481,22 @@ function respawnLocalDailyCam() {
     if (!dailyCall) return;
     const local = dailyCall.participants().local;
     if (!local) return;
+    // Use stored position if available
+    let pos = { x: 0, y: 0 };
+    if (window.dailyPositions && window.dailyPositions[local.session_id]) {
+        pos = window.dailyPositions[local.session_id];
+    }
+    // Broadcast spawn event for Daily cam
+    if (isConnected) {
+        socket.emit('spawn', {
+            type: 'daily-cam',
+            id: `daily-${local.session_id}`,
+            session_id: local.session_id,
+            x: pos.x,
+            y: pos.y
+        });
+    }
+    // Also create locally
     handleParticipant({ participant: local });
 }
 
