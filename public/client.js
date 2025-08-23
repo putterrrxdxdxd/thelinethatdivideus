@@ -110,7 +110,10 @@ function spawnVideo(src = 'archives/video1.mp4', id = null, x = 150, y = 150, fi
     video.style.left = `${x}px`;
     video.width = 320;
     video.height = 240;
-    video.style.borderRadius = '8px';
+    video.style.borderRadius = '0';
+    video.style.border = '1px solid rgba(255,255,255,0.15)';
+    video.dataset.x = x;
+    video.dataset.y = y;
     stage.appendChild(video);
     makeInteractive(video);
     updateFilters(video, false);
@@ -129,7 +132,10 @@ function spawnImage(src, id = null, x = 200, y = 200, filters = {}) {
     img.style.left = `${x}px`;
     img.width = 320;
     img.height = 240;
-    img.style.borderRadius = '8px';
+    img.style.borderRadius = '0';
+    img.style.border = '1px solid rgba(255,255,255,0.15)';
+    img.dataset.x = x;
+    img.dataset.y = y;
     stage.appendChild(img);
     makeInteractive(img);
     updateFilters(img, false);
@@ -150,15 +156,26 @@ function spawnTextBox({ text = '', id = null, x = 100, y = 100, width = 200, hei
     box.style.left = x + 'px';
     box.style.width = width + 'px';
     box.style.height = height + 'px';
-    box.style.background = 'rgba(255,255,200,0.95)';
-    box.style.border = '1.5px solid #888';
-    box.style.borderRadius = '8px';
-    box.style.padding = '8px';
-    box.style.fontSize = '18px';
-    box.style.overflow = 'auto';
+    box.style.background = 'transparent';
+    box.style.border = 'none';
+    box.style.borderRadius = '0';
+    box.style.padding = '0';
+    box.style.fontSize = (height * 0.6) + 'px';
+    box.style.lineHeight = height + 'px';
+    box.style.color = '#fff';
+    box.style.overflow = 'hidden';
     box.style.zIndex = highestZ;
     stage.appendChild(box);
     makeInteractive(box);
+    // Update font size on resize
+    box._resizeObserver = new ResizeObserver(entries => {
+        for (const entry of entries) {
+            const h = entry.target.offsetHeight;
+            entry.target.style.fontSize = Math.max(10, h * 0.6) + 'px';
+            entry.target.style.lineHeight = h + 'px';
+        }
+    });
+    box._resizeObserver.observe(box);
     box.addEventListener('input', () => {
         if (isConnected) socket.emit('text-update', { id, text: box.innerText });
     });
@@ -225,7 +242,8 @@ socket.on('init', (stageState) => {
 socket.on('move', ({ id, x, y }) => {
     const el = document.querySelector(`[data-id="${id}"]`);
     if (el) {
-        el.style.transform = `translate(${x}px, ${y}px)`;
+        el.style.left = `${x}px`;
+        el.style.top = `${y}px`;
         el.dataset.x = x;
         el.dataset.y = y;
     }
@@ -293,7 +311,8 @@ function makeInteractive(el) {
                     const t = e.target;
                     const x = (parseFloat(t.dataset.x) || 0) + e.dx;
                     const y = (parseFloat(t.dataset.y) || 0) + e.dy;
-                    t.style.transform = `translate(${x}px, ${y}px)`;
+                    t.style.left = `${x}px`;
+                    t.style.top = `${y}px`;
                     t.dataset.x = x;
                     t.dataset.y = y;
                     // If it's a Daily video, update the position store
@@ -421,6 +440,15 @@ window.addEventListener('drop', (e) => {
 
 // ---------------- KEYBOARD SHORTCUTS ----------------
 document.addEventListener('keydown', (e) => {
+    // Prevent shortcuts if typing in input, textarea, or contenteditable
+    const target = e.target;
+    if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable
+    ) {
+        return;
+    }
     const key = e.key.toLowerCase();
     if (key === 'm') {
         toggleDailyAudioMute();
@@ -577,11 +605,10 @@ function handleParticipant(ev) {
         }
         video.style.top = `${pos.y || 100 + Math.floor(Math.random() * 200)}px`;
         video.style.left = `${pos.x || 100 + Math.floor(Math.random() * 200)}px`;
-        video.style.borderRadius = '8px';
-        video.style.border = p.local ? '2px solid #28a745' : '2px solid #007bff';
+        video.style.borderRadius = '0';
+        video.style.border = '1px solid rgba(255,255,255,0.15)';
         video.dataset.x = pos.x;
         video.dataset.y = pos.y;
-        video.style.transform = `translate(${pos.x}px, ${pos.y}px)`;
         // Set filters if provided
         video.dataset.filters = JSON.stringify(ev.filters || {});
         stage.appendChild(video);
