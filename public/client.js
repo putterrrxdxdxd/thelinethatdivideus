@@ -94,7 +94,7 @@ async function spawnWebcam(id = null) {
 }
 
 // ---------------- MEDIA SPAWN ----------------
-function spawnVideo(src = 'archives/video1.mp4', id = null, x = 150, y = 150, filters = {}) {
+function spawnVideo(src = 'archives/video1.mp4', id = null, x = 150, y = 150, filters = {}, width = 320, height = 240) {
     id = id || `video-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     if (document.querySelector(`[data-id="${id}"]`)) return;
     const video = document.createElement('video');
@@ -108,19 +108,21 @@ function spawnVideo(src = 'archives/video1.mp4', id = null, x = 150, y = 150, fi
     video.style.position = 'absolute';
     video.style.top = `${y}px`;
     video.style.left = `${x}px`;
-    video.width = 320;
-    video.height = 240;
+    video.width = width;
+    video.height = height;
     video.style.borderRadius = '0';
     video.style.border = '1px solid rgba(255,255,255,0.15)';
     video.dataset.x = x;
     video.dataset.y = y;
+    video.style.width = `${width}px`;
+    video.style.height = `${height}px`;
     stage.appendChild(video);
     makeInteractive(video);
     updateFilters(video, false);
-    if (isConnected) socket.emit('spawn', { type: 'video', src, id, x, y, filters });
+    if (isConnected) socket.emit('spawn', { type: 'video', src, id, x, y, filters, width, height });
 }
 
-function spawnImage(src, id = null, x = 200, y = 200, filters = {}) {
+function spawnImage(src, id = null, x = 200, y = 200, filters = {}, width = 320, height = 240) {
     id = id || `image-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     if (document.querySelector(`[data-id="${id}"]`)) return;
     const img = document.createElement('img');
@@ -130,16 +132,18 @@ function spawnImage(src, id = null, x = 200, y = 200, filters = {}) {
     img.style.position = 'absolute';
     img.style.top = `${y}px`;
     img.style.left = `${x}px`;
-    img.width = 320;
-    img.height = 240;
+    img.width = width;
+    img.height = height;
     img.style.borderRadius = '0';
     img.style.border = '1px solid rgba(255,255,255,0.15)';
     img.dataset.x = x;
     img.dataset.y = y;
+    img.style.width = `${width}px`;
+    img.style.height = `${height}px`;
     stage.appendChild(img);
     makeInteractive(img);
     updateFilters(img, false);
-    if (isConnected) socket.emit('spawn', { type: 'image', src, id, x, y, filters });
+    if (isConnected) socket.emit('spawn', { type: 'image', src, id, x, y, filters, width, height });
 }
 
 // --- TEXT BOX SPAWN ---
@@ -192,8 +196,8 @@ stage.addEventListener('click', (e) => {
 
 // ---------------- SOCKET EVENTS ----------------
 socket.on('spawn', (data) => {
-    if (data.type === 'video') spawnVideo(data.src, data.id, data.x, data.y, data.filters);
-    if (data.type === 'image') spawnImage(data.src, data.id, data.x, data.y, data.filters);
+    if (data.type === 'video') spawnVideo(data.src, data.id, data.x, data.y, data.filters, data.width, data.height);
+    if (data.type === 'image') spawnImage(data.src, data.id, data.x, data.y, data.filters, data.width, data.height);
     if (data.type === 'text') spawnTextBox(data);
     if (data.type === 'daily-cam' && data.session_id) {
         // Set position in store
@@ -220,20 +224,20 @@ socket.on('init', (stageState) => {
     document.querySelectorAll('[data-id]').forEach(el => el.remove());
     // Recreate all elements from the state
     for (const data of stageState) {
-        if (data.type === 'video') spawnVideo(data.src, data.id, data.x, data.y, data.filters);
-        else if (data.type === 'image') spawnImage(data.src, data.id, data.x, data.y, data.filters);
+        if (data.type === 'video') spawnVideo(data.src, data.id, data.x, data.y, data.filters, data.width, data.height);
+        else if (data.type === 'image') spawnImage(data.src, data.id, data.x, data.y, data.filters, data.width, data.height);
         else if (data.type === 'text') spawnTextBox(data);
         else if (data.type === 'daily-cam' && data.session_id) {
             if (!window.dailyPositions) window.dailyPositions = {};
             window.dailyPositions[data.session_id] = { x: data.x, y: data.y };
             if (dailyCall && dailyCall.participants()[data.session_id]) {
-                handleParticipant({ participant: dailyCall.participants()[data.session_id], x: data.x, y: data.y, filters: data.filters });
+                handleParticipant({ participant: dailyCall.participants()[data.session_id], x: data.x, y: data.y, filters: data.filters, width: data.width, height: data.height });
             }
         } else if (data.type === 'daily-cam-duplicate' && data.session_id) {
             if (!window.dailyPositions) window.dailyPositions = {};
             window.dailyPositions[data.id] = { x: data.x, y: data.y };
             if (dailyCall && dailyCall.participants()[data.session_id]) {
-                handleParticipant({ participant: dailyCall.participants()[data.session_id], forceDuplicate: true, id: data.id, x: data.x, y: data.y, filters: data.filters });
+                handleParticipant({ participant: dailyCall.participants()[data.session_id], forceDuplicate: true, id: data.id, x: data.x, y: data.y, filters: data.filters, width: data.width, height: data.height });
             }
         }
     }
@@ -306,7 +310,13 @@ function makeInteractive(el) {
     interact(el)
         .draggable({
             listeners: {
-                start: (e) => bringToFront(e.target),
+                start: (e) => {
+                    bringToFront(e.target);
+                    // Fix: set dataset.x/y to current left/top on drag start
+                    const t = e.target;
+                    t.dataset.x = parseInt(t.style.left, 10) || 0;
+                    t.dataset.y = parseInt(t.style.top, 10) || 0;
+                },
                 move: (e) => {
                     const t = e.target;
                     const x = (parseFloat(t.dataset.x) || 0) + e.dx;
@@ -593,9 +603,6 @@ function handleParticipant(ev) {
         video.autoplay = true;
         video.playsInline = true;
         video.muted = p.local;
-        video.width = 320;
-        video.height = 240;
-        video.style.position = 'absolute';
         // Use stored position if available
         let pos = { x: 0, y: 0 };
         if (typeof ev.x === 'number' && typeof ev.y === 'number') {
@@ -603,12 +610,19 @@ function handleParticipant(ev) {
         } else if (window.dailyPositions && window.dailyPositions[id]) {
             pos = window.dailyPositions[id];
         }
+        let width = ev.width || 320;
+        let height = ev.height || 240;
+        video.style.position = 'absolute';
         video.style.top = `${pos.y || 100 + Math.floor(Math.random() * 200)}px`;
         video.style.left = `${pos.x || 100 + Math.floor(Math.random() * 200)}px`;
         video.style.borderRadius = '0';
         video.style.border = '1px solid rgba(255,255,255,0.15)';
         video.dataset.x = pos.x;
         video.dataset.y = pos.y;
+        video.style.width = `${width}px`;
+        video.style.height = `${height}px`;
+        video.width = width;
+        video.height = height;
         // Set filters if provided
         video.dataset.filters = JSON.stringify(ev.filters || {});
         stage.appendChild(video);
@@ -676,6 +690,18 @@ document.addEventListener('DOMContentLoaded', () => {
     if (btnAudio) btnAudio.onclick = toggleDailyAudioMute;
     if (btnVideo) btnVideo.onclick = toggleDailyVideoMute;
     if (btnRespawn) btnRespawn.onclick = respawnLocalDailyCam;
+    // Mobile upload button
+    const btnMobileUpload = document.getElementById('mobile-upload-btn');
+    if (btnMobileUpload) {
+        btnMobileUpload.onclick = () => {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'video/*,image/*';
+            input.multiple = true;
+            input.onchange = ev => { for (const file of ev.target.files) handleFile(file); };
+            input.click();
+        };
+    }
 });
 
 window.addEventListener('beforeunload', () => {
@@ -683,3 +709,77 @@ window.addEventListener('beforeunload', () => {
         localStream.getTracks().forEach(track => track.stop());
     }
 });
+
+// --- Joystick for viewport panning ---
+(function setupJoystick() {
+    const container = document.getElementById('joystick-container');
+    const joystick = document.getElementById('joystick');
+    const knob = document.getElementById('joystick-knob');
+    if (!container || !joystick || !knob) return;
+    let dragging = false;
+    let startX = 0, startY = 0;
+    let knobX = 0, knobY = 0;
+    let panInterval = null;
+    const maxDist = 20; // max px from center
+    function setKnob(x, y) {
+        knob.style.transform = `translate(${x}px, ${y}px)`;
+    }
+    function resetKnob() {
+        knobX = 0; knobY = 0;
+        setKnob(0, 0);
+    }
+    function panStage() {
+        // Pan the stage by scrolling or transform
+        // We'll use window.scrollBy for now (assuming the stage is larger than viewport)
+        window.scrollBy(knobX * 0.5, knobY * 0.5);
+    }
+    function onMove(e) {
+        if (!dragging) return;
+        let clientX, clientY;
+        if (e.touches && e.touches.length) {
+            clientX = e.touches[0].clientX;
+            clientY = e.touches[0].clientY;
+        } else {
+            clientX = e.clientX;
+            clientY = e.clientY;
+        }
+        let dx = clientX - startX;
+        let dy = clientY - startY;
+        // Clamp to maxDist
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist > maxDist) {
+            const angle = Math.atan2(dy, dx);
+            dx = Math.cos(angle) * maxDist;
+            dy = Math.sin(angle) * maxDist;
+        }
+        knobX = dx;
+        knobY = dy;
+        setKnob(dx, dy);
+    }
+    function onStart(e) {
+        dragging = true;
+        if (e.touches && e.touches.length) {
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
+        } else {
+            startX = e.clientX;
+            startY = e.clientY;
+        }
+        panInterval = setInterval(panStage, 16); // ~60fps
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('touchmove', onMove, {passive:false});
+        document.addEventListener('mouseup', onEnd);
+        document.addEventListener('touchend', onEnd);
+    }
+    function onEnd() {
+        dragging = false;
+        resetKnob();
+        clearInterval(panInterval);
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('touchmove', onMove);
+        document.removeEventListener('mouseup', onEnd);
+        document.removeEventListener('touchend', onEnd);
+    }
+    joystick.addEventListener('mousedown', onStart);
+    joystick.addEventListener('touchstart', onStart, {passive:false});
+})();
